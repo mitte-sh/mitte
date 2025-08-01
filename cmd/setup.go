@@ -60,7 +60,7 @@ command that should be run on a fresh server.`,
 
 		fmt.Println("\n✅ Mitte setup complete!")
 		fmt.Println("\nYour server is now ready to host applications.")
-		fmt.Println("Next step: Add your SSH key using 'mitte keys:add <name>'")
+		fmt.Println("Next step: Add your SSH key using 'mitte keys add <name>'")
 	},
 }
 
@@ -335,11 +335,15 @@ func installMitteBinary() error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer destFile.Close()
 
-	_, err = io.Copy(destFile, srcFile)
-	if err != nil {
-		return fmt.Errorf("failed to copy binary: %w", err)
+	_, copyErr := io.Copy(destFile, srcFile)
+	closeErr := destFile.Close()
+
+	if copyErr != nil {
+		return fmt.Errorf("failed to copy binary: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to close destination file: %w", closeErr)
 	}
 
 	err = os.Chmod(destPath, 0755)
@@ -348,6 +352,20 @@ func installMitteBinary() error {
 	}
 
 	fmt.Printf("mitte installed successfully to %s\n", destPath)
+
+	symlinkPath := "/usr/bin/mitte"
+	// Attempt to remove an existing symlink to make the operation idempotent.
+	// Ignore "not exist" errors.
+	if err := os.Remove(symlinkPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove existing symlink at %s: %w", symlinkPath, err)
+	}
+
+	if err := os.Symlink(destPath, symlinkPath); err != nil {
+		return fmt.Errorf("failed to create symlink: %w", err)
+	}
+
+	fmt.Printf("Successfully created symlink at %s\n", symlinkPath)
+
 	return nil
 }
 
