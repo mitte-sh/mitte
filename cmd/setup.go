@@ -299,6 +299,14 @@ func createUser() {
 			os.Exit(1)
 		}
 	}
+
+	sudoersContent := "mitte   ALL=(ALL)       NOPASSWD: /usr/bin/chown\n"
+	sudoersFilePath := "/etc/sudoers.d/mitte-chown"
+	if err := os.WriteFile(sudoersFilePath, []byte(sudoersContent), 0440); err != nil {
+		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersFilePath, err)
+		os.Exit(1)
+	}
+	fmt.Println("Sudoers configured for 'mitte' user.")
 }
 
 func configureReverseProxy(proxy string) {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"regexp"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mitteapp/mitteapp/pkg/builder"
 )
 
 // gitReceiveCmd represents the command triggered by SSH for a git push.
@@ -44,24 +47,26 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "-----> First push for '%s', creating new bare repository.\n", appName)
 		if err := os.MkdirAll(repoPath, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to create repository directory: %v\n", err)
-			os.Exit(1)
-		}
-		// Initialize a bare git repository
-		gitInitCmd := exec.Command("git", "init", "--bare")
-		gitInitCmd.Dir = repoPath
-		if err := gitInitCmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to initialize bare repository: %v\n", err)
+			fmt.Fprintf(os.Stderr, "FATAL: failed to create repository directory: %v\n", err)
 			os.Exit(1)
 		}
 
-		// The `mitte` system user must own the repository.
-		chownCmd := exec.Command("chown", "-R", mitteSystemUser+":"+mitteSystemUser, repoPath)
-		if err := chownCmd.Run(); err != nil {
-			// This might fail if the current user doesn't have permissions to chown.
-			// The git-receive process should run as the 'mitte' user in a perfect setup,
-			// but for now we proceed assuming root/sudo context.
-			fmt.Fprintf(os.Stderr, "Warning: failed to chown repository: %v. This may cause issues later.\n", err)
+		// Initialize bare repo
+		gitInitCmd := exec.Command("git", "init", "--bare")
+		gitInitCmd.Dir = repoPath
+		if err := gitInitCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "FATAL: failed to initialize bare repository: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "-----> Setting repository ownership for user '%s'...\n", mitteSystemUser)
+		chownCmd := exec.Command("sudo", "chown", "-R", mitteSystemUser+":"+mitteSystemUser, repoPath)
+		if output, err := chownCmd.CombinedOutput(); err != nil {
+			// If this fails, the deployment cannot succeed. We must exit.
+			fmt.Fprintf(os.Stderr, "FATAL: failed to set ownership on repository: %v\n", err)
+			fmt.Fprintf(os.Stderr, "       This usually means the 'mitte' user needs passwordless sudo access for 'chown'.\n")
+			fmt.Fprintf(os.Stderr, "       Output: %s\n", string(output))
+			os.Exit(1)
 		}
 	}
 
@@ -112,8 +117,12 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 	// --- 5. Trigger the Build (Placeholder) ---
 	fmt.Fprintln(os.Stderr, "-----> Starting build process...")
-	// imageTag := buildApplication(appName, buildDir) // TODO: Implement this function!
-	// fmt.Printf("-----> Built image: %s\n", imageTag)
+	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "-----> imageTag:", imageTag)
 
 	// --- 6. Deploy and Route (Placeholder) ---
 	fmt.Fprintln(os.Stderr, "-----> Deploying new container...")
