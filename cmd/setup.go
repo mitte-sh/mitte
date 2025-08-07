@@ -378,65 +378,84 @@ func installMitteBinary() error {
 }
 
 // enableAdminMode ensures that the Caddy admin API is enabled in the Caddyfile.
-// It parses /etc/caddy/Caddyfile and adds the 'admin' directive if it's not present.
-// This function is idempotent: running it multiple times has the same effect as running it once.
+// It checks for an existing admin directive. If not found, it either adds it
+// to an existing global options block or creates a new one.
+// This function is idempotent.
 func enableAdminMode() {
 	const caddyfilePath = "/etc/caddy/Caddyfile"
-	const adminDirectiveToAdd = "admin localhost:2019"
+	const adminDirective = "admin localhost:2019"
+	const adminBlock = "{\n\t" + adminDirective + "\n}\n"
 
 	fmt.Println("INFO: Checking Caddy configuration at", caddyfilePath)
 
 	contentBytes, err := os.ReadFile(caddyfilePath)
-
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("INFO: Caddyfile not found. Creating a new one with admin mode...\n")
-
-			newContent := adminDirectiveToAdd + "\n"
-
-			err = os.WriteFile(caddyfilePath, []byte(newContent), 0644)
+			err = os.WriteFile(caddyfilePath, []byte(adminBlock), 0644)
 			if err != nil {
 				log.Fatalf("FATAL: Failed to create and write to Caddyfile: %v\n", err)
 			}
-
 			fmt.Println("SUCCESS: Successfully created Caddyfile with admin mode enabled.")
 			return
 		}
-
 		log.Fatalf("FATAL: Failed to read Caddyfile: %v\n", err)
 	}
 
 	content := string(contentBytes)
 	lines := strings.Split(content, "\n")
 
-	isAdminDirectivePresent := false
+	hasAdminDirective := false
 	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmedLine, "admin ") {
-			isAdminDirectivePresent = true
-			fmt.Printf("INFO: Admin mode is already configured: \"%s\"\n", trimmedLine)
+		if strings.Contains(strings.TrimSpace(line), "admin ") {
+			hasAdminDirective = true
+			fmt.Printf("INFO: Admin mode is already configured: \"%s\"\n", strings.TrimSpace(line))
 			break
 		}
 	}
 
-	if !isAdminDirectivePresent {
-		fmt.Println("INFO: Admin directive not found. Prepending it to the Caddyfile...")
-
-		newContent := adminDirectiveToAdd + "\n"
-		if content != "" {
-			newContent += "\n" + content
-		}
-
-		err = os.WriteFile(caddyfilePath, []byte(newContent), 0644)
-		if err != nil {
-			log.Fatalf("FATAL: Failed to write updated Caddyfile: %v", err)
-		}
-
-		fmt.Println("SUCCESS: Successfully enabled admin mode in Caddyfile.")
-	} else {
+	if hasAdminDirective {
 		fmt.Println("INFO: No changes needed.")
+		return
 	}
+
+	fmt.Println("INFO: Admin directive not found. Modifying Caddyfile...")
+
+	firstNonEmptyLineIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			firstNonEmptyLineIdx = i
+			break
+		}
+	}
+
+	var newContent string
+	if firstNonEmptyLineIdx != -1 && strings.HasPrefix(strings.TrimSpace(lines[firstNonEmptyLineIdx]), "{") {
+		// A global options block exists. Add the admin directive inside it.
+		lineWithBrace := lines[firstNonEmptyLineIdx]
+		pos := strings.Index(lineWithBrace, "{")
+		restOfLine := lineWithBrace[pos+1:]
+
+		var newLines []string
+		newLines = append(newLines, lines[:firstNonEmptyLineIdx]...)
+		newLines = append(newLines, lineWithBrace[:pos+1])
+		newLines = append(newLines, "\t"+adminDirective)
+		if strings.TrimSpace(restOfLine) != "" {
+			newLines = append(newLines, restOfLine)
+		}
+		newLines = append(newLines, lines[firstNonEmptyLineIdx+1:]...)
+		newContent = strings.Join(newLines, "\n")
+	} else {
+		// No global options block found, prepend a new one.
+		newContent = adminBlock + "\n" + content
+	}
+
+	err = os.WriteFile(caddyfilePath, []byte(newContent), 0644)
+	if err != nil {
+		log.Fatalf("FATAL: Failed to write updated Caddyfile: %v", err)
+	}
+
+	fmt.Println("SUCCESS: Successfully enabled admin mode in Caddyfile.")
 }
 
 func configureSSH() {
@@ -479,19 +498,24 @@ func installAndConfigureCaddy() {
 	}
 
 	if err := runCommand("chmod", "644", "/etc/caddy/Caddyfile"); err != nil {
-		fmt.Println("Error creating Caddy file:", err)
+		fmt.Println("Error setting permissions for Caddyfile:", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chown", "root:root", "/etc/caddy/Caddyfile"); err != nil {
-		fmt.Println("Error creating Caddy file:", err)
+		fmt.Println("Error setting ownership for Caddyfile:", err)
 		os.Exit(1)
 	}
 
 	enableAdminMode()
 
-	if err := runCommand("systemctl", "reload", proxy); err != nil {
-		fmt.Println("Error reloading "+proxy+":", err)
+	if err := runCommand("systemctl", "enable", proxy); err != nil {
+		fmt.Println("Error enabling "+proxy+":", err)
+		os.Exit(1)
+	}
+
+	if err := runCommand("systemctl", "reload-or-restart", proxy); err != nil {
+		fmt.Println("Error starting or reloading "+proxy+":", err)
 		os.Exit(1)
 	}
 }
