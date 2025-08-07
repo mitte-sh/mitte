@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitteapp/mitteapp/pkg/builder"
+	"github.com/mitteapp/mitteapp/pkg/deployer"
+	"github.com/mitteapp/mitteapp/pkg/router"
 )
 
 // gitReceiveCmd represents the command triggered by SSH for a git push.
@@ -124,28 +126,25 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 	fmt.Fprintln(os.Stderr, "-----> imageTag:", imageTag)
 
-	// --- 6. Deploy and Route (Placeholder) ---
-	fmt.Fprintln(os.Stderr, "-----> Deploying new container...")
-	// containerID := runApplication(appName, imageTag) // TODO: Implement this function!
-	// updateRouting(appName, containerID) // TODO: Implement this function!
+	// --- 6. Deploy the new image ---
+	deployResult, err := deployer.Deploy(context.Background(), appName, imageTag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Deployment failed: %v\n", err)
+		os.Exit(1)
+	}
 
-	// --- 7. Cleanup (Placeholder) ---
-	// cleanupOldContainers(appName, containerID) // TODO: Implement this function!
+	// --- 7. Update the routing layer ---
+	if err := router.UpdateRoute(appName, deployResult.HostPort); err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Routing update failed: %v\n", err)
+		// We don't exit here, because the app is running, just not routable.
+		// A more advanced system would try to roll back.
+	}
 
-	fmt.Fprintln(os.Stderr, "-----> Deployment complete (placeholders).")
-	fmt.Fprintln(os.Stderr, "-----> Next steps: Implement building and running containers.")
+	fmt.Fprintln(os.Stderr, "-----> ✨ Deployment complete! ✨")
+	fmt.Fprintf(os.Stderr, "-----> App '%s' is live and running in container %s\n", appName, deployResult.ContainerID[:12])
+	// You should be able to access it at http://<appName>.<your_base_domain>
 }
 
 func init() {
 	rootCmd.AddCommand(gitReceiveCmd)
-}
-
-// Helper to gracefully run commands and stream their output
-func runStreamingCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	// Setting Stderr and Stdout to os.Stderr and os.Stdout will stream the output
-	// of the command directly to the user's terminal.
-	cmd.Stderr = os.Stdout
-	cmd.Stdout = os.Stdout
-	return cmd.Run()
 }
