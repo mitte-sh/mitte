@@ -134,10 +134,22 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 
 	// --- 7. Update the routing layer ---
-	if err := router.UpdateRoute(appName, deployResult.HostPort); err != nil {
-		fmt.Fprintf(os.Stderr, "\n!! Routing update failed: %v\n", err)
-		// We don't exit here, because the app is running, just not routable.
-		// A more advanced system would try to roll back.
+	// Check if route exists
+	exists, err := router.RouteExistsFile(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Routing check failed: %v\n", err)
+	}
+
+	if exists {
+		fmt.Fprintf(os.Stderr, "-----> Updating existing route\n")
+		if err := router.CreateRouteFile(appName, deployResult.HostPort); err != nil {
+			fmt.Fprintf(os.Stderr, "\n!! Routing update failed: %v\n", err)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "-----> Creating new route\n")
+		if err := router.CreateRouteFile(appName, deployResult.HostPort); err != nil {
+			fmt.Fprintf(os.Stderr, "\n!! Routing creation failed: %v\n", err)
+		}
 	}
 
 	fmt.Fprintln(os.Stderr, "-----> ✨ Deployment complete! ✨")

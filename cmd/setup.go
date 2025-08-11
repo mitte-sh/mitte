@@ -50,11 +50,15 @@ command that should be run on a fresh server.`,
 		installReverseProxy(selectedProxy)
 		configureReverseProxy(selectedProxy)
 
-		// --- 7. Install Version Control System ---
+		// --- 7. Configure Sudoers ---
+		fmt.Println("\n-- Configuring sudoers for 'mitte' user --")
+		configureSudoers()
+
+		// --- 8. Install Version Control System ---
 		fmt.Println("\n-- Installing Version Control System --")
 		installVersionControlSystem(versionControlSystem)
 
-		// --- 8. Final Steps ---
+		// --- 9. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 
@@ -299,13 +303,27 @@ func createUser() {
 			os.Exit(1)
 		}
 	}
+}
 
-	sudoersContent := "mitte   ALL=(ALL)       NOPASSWD: /usr/bin/chown\n"
-	sudoersFilePath := "/etc/sudoers.d/mitte-chown"
-	if err := os.WriteFile(sudoersFilePath, []byte(sudoersContent), 0440); err != nil {
-		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersFilePath, err)
+func configureSudoers() {
+	// Chown permissions
+	sudoersChownContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/chown\n"
+	sudoersChownFilePath := "/etc/sudoers.d/mitte-chown"
+	if err := os.WriteFile(sudoersChownFilePath, []byte(sudoersChownContent), 0440); err != nil {
+		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersChownFilePath, err)
 		os.Exit(1)
 	}
+
+	// Caddy-related permissions
+	sudoersCaddyContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/Caddyfile.d\n" +
+		"mitte ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/caddy/Caddyfile.d/*\n" +
+		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload caddy\n"
+	sudoersCaddyFilePath := "/etc/sudoers.d/mitte-caddy"
+	if err := os.WriteFile(sudoersCaddyFilePath, []byte(sudoersCaddyContent), 0440); err != nil {
+		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersCaddyFilePath, err)
+		os.Exit(1)
+	}
+
 	fmt.Println("Sudoers configured for 'mitte' user.")
 }
 
