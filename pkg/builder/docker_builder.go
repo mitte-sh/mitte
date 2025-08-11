@@ -34,7 +34,7 @@ type StreamLine struct {
 
 // BuildImage uses the Docker SDK to build an image from a given directory.
 // It returns the unique image tag and any error that occurred.
-func BuildImage(ctx context.Context, appName, buildDir, repoPath string) (string, error) {
+func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchName string) (string, error) {
 	fmt.Fprintln(os.Stderr, "-----> Connecting to Docker daemon...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -43,12 +43,18 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string) (string
 	defer cli.Close()
 
 	// --- 1. Get the Git SHA for tagging ---
-	branchToDeploy := "main"
-	gitSha, err := getGitCommitHash(repoPath, branchToDeploy)
+	commitHash, err := getGitCommitHash(repoPath, branchName)
 	if err != nil {
 		return "", fmt.Errorf("could not get git commit hash: %w", err)
 	}
-	imageTag := fmt.Sprintf("%s:%s", strings.ToLower(appName), gitSha)
+
+	// Safely create a short hash for the tag
+	shortHash := commitHash
+	if len(shortHash) > 12 {
+		shortHash = shortHash[:12]
+	}
+	imageTag := fmt.Sprintf("%s:%s", appName, shortHash)
+
 	fmt.Fprintf(os.Stderr, "-----> Creating image tag: %s\n", imageTag)
 
 	// --- 2. Create the build context (a tarball of the build directory) ---
@@ -140,18 +146,13 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string) (string
 	return imageTag, nil
 }
 
-// getGitCommitHash returns the short commit hash of the branch that was just pushed.
-// We pass in the branch name for reliability.
 func getGitCommitHash(repoPath string, branchName string) (string, error) {
-	// We now resolve the specific branch reference, which is more stable than HEAD.
-	cmd := exec.Command("git", "--git-dir="+repoPath, "rev-parse", "--short", branchName)
+	cmd := exec.Command("git", "rev-parse", "--short", branchName)
+	cmd.Dir = repoPath
 
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("git rev-parse failed with exit code %d for branch '%s': %s", exitErr.ExitCode(), branchName, string(exitErr.Stderr))
-		}
-		return "", err
+		return "", fmt.Errorf("git rev-parse failed for branch '%s': %s", branchName, string(out))
 	}
 	return strings.TrimSpace(string(out)), nil
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -95,13 +96,26 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 	defer os.RemoveAll(buildDir) // Clean up the build directory when we're done.
 
-	// IMPORTANT: For now, we assume the user is pushing the 'main' branch.
-	// A future improvement would be to dynamically detect the default branch.
-	branchToDeploy := "main"
+	// Determine the branch to deploy by finding the most recently updated one.
+	getBranchCmd := exec.Command("sh", "-c", "git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' | head -n 1")
+	getBranchCmd.Dir = repoPath
+	branchOutput, err := getBranchCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to determine deployment branch: %v\n%s", err, string(branchOutput))
+		os.Exit(1)
+	}
+	branchToDeploy := strings.TrimSpace(string(branchOutput))
+
+	// If the push contained no branches (e.g., only tags), there's nothing to deploy.
+	if branchToDeploy == "" {
+		fmt.Fprintln(os.Stderr, "-----> No branch to deploy. Push a branch to trigger a deployment.")
+		os.Exit(0) // Exit gracefully, as this is not an error condition.
+	}
+
 	fmt.Fprintf(os.Stderr, "-----> Archiving branch '%s' for deployment...\n", branchToDeploy)
 
-	// This is the new, robust command. It creates a tar archive of the 'main'
-	// branch and pipes it to tar, which extracts it into our build directory.
+	// This command creates a tar archive of the detected branch and pipes it
+	// to tar, which extracts it into our build directory.
 	archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchToDeploy, buildDir)
 	archiveCmd := exec.Command("sh", "-c", archiveCmdString)
 
@@ -119,7 +133,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 	// --- 5. Trigger the Build (Placeholder) ---
 	fmt.Fprintln(os.Stderr, "-----> Starting build process...")
-	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath)
+	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
 		os.Exit(1)
