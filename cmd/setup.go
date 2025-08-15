@@ -58,7 +58,13 @@ command that should be run on a fresh server.`,
 		fmt.Println("\n-- Installing Version Control System --")
 		installVersionControlSystem(versionControlSystem)
 
-		// --- 9. Final Steps ---
+		// --- 9. Configure Base Domain ---
+		fmt.Println("\n-- Configuring Base Domain --")
+		if err := configureBaseDomain(); err != nil {
+			log.Fatalf("Error configuring base domain: %v", err)
+		}
+
+		// --- 10. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 
@@ -536,4 +542,30 @@ func installAndConfigureCaddy() {
 		fmt.Println("Error starting or reloading "+proxy+":", err)
 		os.Exit(1)
 	}
+}
+
+func configureBaseDomain() error {
+	fmt.Print("Enter the base domain for your apps (e.g., example.com): ")
+	reader := bufio.NewReader(os.Stdin)
+	domain, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read domain from input: %w", err)
+	}
+	domain = strings.TrimSpace(domain)
+
+	if domain == "" {
+		return fmt.Errorf("domain cannot be empty")
+	}
+
+	domainFilePath := "/etc/mitte/domain"
+	if err := os.WriteFile(domainFilePath, []byte(domain), 0644); err != nil {
+		return fmt.Errorf("failed to write domain to %s: %w", domainFilePath, err)
+	}
+
+	if err := runCommand("chown", "mitte:mitte", domainFilePath); err != nil {
+		return fmt.Errorf("failed to set ownership of %s: %w", domainFilePath, err)
+	}
+
+	fmt.Printf("✅ Base domain set to '%s'.\n", domain)
+	return nil
 }

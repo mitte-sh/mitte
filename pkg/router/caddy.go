@@ -11,7 +11,7 @@ import (
 
 const caddyAdminAPI = "http://localhost:2019"
 
-const baseDomain = "hh.com.py"
+const domainFilePath = "/etc/mitte/domain"
 
 // CaddyServerConfig maps to a server object in Caddy's config.
 // We use pointers and `omitempty` so we can differentiate between a field
@@ -35,6 +35,10 @@ const caddyfileDir = "/etc/caddy/Caddyfile.d"
 // CreateRouteFile creates a new Caddyfile in the Caddyfile.d directory
 // to route traffic for a given app, and then reloads Caddy.
 func CreateRouteFile(appName, hostPort string) error {
+	baseDomain, err := getBaseDomain()
+	if err != nil {
+		return err
+	}
 	appURL := fmt.Sprintf("%s.%s", appName, baseDomain)
 	fmt.Fprintf(os.Stderr, "-----> Creating Caddy route file for %s -> localhost:%s\n", appURL, hostPort)
 
@@ -69,14 +73,27 @@ func reloadCaddy() error {
 	return nil
 }
 
-// UpdateRouteFile updates an existing Caddyfile in the Caddyfile.d directory
-// to route traffic for a given app, and then reloads Caddy.
-func UpdateRouteFile(appName, hostPort string) error {
-	appURL := fmt.Sprintf("%s.%s", appName, baseDomain)
-	fmt.Fprintf(os.Stderr, "-----> Updating Caddy route file for %s -> localhost:%s\n", appURL, hostPort)
+// SetAppRoutes creates, updates, or deletes the Caddyfile for an app
+// to ensure its configuration matches the provided list of domains.
+func SetAppRoutes(appName string, domains []string, hostPort string) error {
+	// If an app has no domains, its config file should be removed.
+	if len(domains) == 0 {
+		fmt.Fprintf(os.Stderr, "-----> No domains for '%s'. Removing Caddy route file.\n", appName)
+		return DeleteRouteFile(appName) // DeleteRouteFile already reloads Caddy
+	}
+
+	fmt.Fprintf(os.Stderr, "-----> Setting Caddy routes for %s: %v -> localhost:%s\n", appName, domains, hostPort)
+
+	// Ensure the directory for Caddyfiles exists.
+	if err := exec.Command("sudo", "mkdir", "-p", caddyfileDir).Run(); err != nil {
+		return fmt.Errorf("failed to create caddyfile directory with sudo: %w", err)
+	}
 
 	filePath := filepath.Join(caddyfileDir, fmt.Sprintf("%s.caddyfile", appName))
-	content := fmt.Sprintf("%s {\n\treverse_proxy localhost:%s\n}", appURL, hostPort)
+
+	// Join all domains with a space for the Caddyfile header.
+	domainHeader := strings.Join(domains, " ")
+	content := fmt.Sprintf("%s {\n\treverse_proxy localhost:%s\n}", domainHeader, hostPort)
 
 	// Write/overwrite the file using sudo and tee.
 	cmd := exec.Command("sudo", "tee", filePath)
@@ -84,9 +101,9 @@ func UpdateRouteFile(appName, hostPort string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to write route file %s with sudo: %w", filePath, err)
 	}
-	fmt.Fprintf(os.Stderr, "-----> Route file %s updated successfully.\n", filePath)
+	fmt.Fprintf(os.Stderr, "-----> Route file %s set successfully.\n", filePath)
 
-	// Reload Caddy to apply changes
+	// Reload Caddy to apply changes.
 	return reloadCaddy()
 }
 
@@ -131,4 +148,19 @@ func RouteExistsFile(appName string) (bool, error) {
 	// For any other error (e.g., sudo permission denied, command not found)
 	// or an unexpected exit code, we return the error.
 	return false, fmt.Errorf("error checking route file %s with sudo: %w", filePath, err)
+}
+
+func getBaseDomain() (string, error) {
+	content, err := os.ReadFile(domainFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("base domain not configured. Please run 'mitte setup' or create %s with your base domain", domainFilePath)
+		}
+		return "", fmt.Errorf("failed to read base domain from %s: %w", domainFilePath, err)
+	}
+	domain := strings.TrimSpace(string(content))
+	if domain == "" {
+		return "", fmt.Errorf("base domain file %s is empty", domainFilePath)
+	}
+	return domain, nil
 }
