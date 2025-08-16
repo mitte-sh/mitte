@@ -284,6 +284,11 @@ func createUser() {
 			fmt.Println("Warning: 'mitte' user may already exist. Skipping.", err)
 		}
 
+		if err := runCommand("usermod", "-aG", "docker", "mitte"); err != nil {
+			fmt.Println("Error adding 'mitte' user to docker group:", err)
+			os.Exit(1)
+		}
+
 		if err := runCommand("passwd", "-l", "mitte"); err != nil {
 			fmt.Println("Error locking user:", err)
 			os.Exit(1)
