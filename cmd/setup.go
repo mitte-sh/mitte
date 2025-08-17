@@ -335,6 +335,14 @@ func configureSudoers() {
 		os.Exit(1)
 	}
 
+	// Mitte command permissions
+	sudoersMitteContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/mitte\n"
+	sudoersMitteFilePath := "/etc/sudoers.d/mitte-cmd"
+	if err := os.WriteFile(sudoersMitteFilePath, []byte(sudoersMitteContent), 0440); err != nil {
+		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersMitteFilePath, err)
+		os.Exit(1)
+	}
+
 	fmt.Println("Sudoers configured for 'mitte' user.")
 }
 
@@ -367,7 +375,7 @@ func installMitteBinary() error {
 	}
 	defer srcFile.Close()
 
-	destPath := "/usr/local/bin/mitte"
+	destPath := "/usr/bin/mitte"
 	destFile, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)

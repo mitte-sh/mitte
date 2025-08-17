@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const mitteBinaryPath = "/usr/local/bin/mitte"
+const mitteBinaryPath = "/usr/bin/mitte"
 
 const mitteSystemUser = "mitte"
 
@@ -72,7 +72,7 @@ func runKeysAdd(cmd *cobra.Command, args []string) {
 	// This is the most critical part. It ensures that this key can ONLY be used
 	// to trigger our 'mitte git-receive' command.
 	forcedCommand := fmt.Sprintf(
-		`command="%s git-receive",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`,
+		`command="%s ssh-handler",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`,
 		mitteBinaryPath,
 	)
 
