@@ -10,8 +10,6 @@ import (
 	"github.com/mitteapp/mitteapp/pkg/config"
 )
 
-const mitteServerBinaryPath = "/usr/bin/mitte"
-
 func main() {
 	// If this variable is set, it means we are being re-executed by the ssh-handler
 	// on the server side, so we should just run the command directly.
@@ -41,6 +39,7 @@ func main() {
 		"help":   true, // Cobra handles 'help'
 		"--help": true,
 		"-h":     true,
+		// TODO: Add `version` command
 		// "version": true,
 	}
 	if directCommands[args[0]] {
@@ -57,8 +56,20 @@ func main() {
 		return
 	}
 
-	// If we get here, it means we have a valid client config, so we proxy over SSH.
-	remoteCommand := mitteServerBinaryPath + " " + strings.Join(args, " ")
+	// 1. Manually quote each argument to make it safe for the remote shell.
+	quotedArgs := []string{}
+	for _, arg := range args {
+		// This wraps each argument in single quotes, and correctly handles
+		// any single quotes that might be inside the argument itself.
+		quotedArg := fmt.Sprintf("'%s'", strings.ReplaceAll(arg, "'", `'\''`))
+		quotedArgs = append(quotedArgs, quotedArg)
+	}
+
+	// 2. Join the *quoted* arguments and prefix with the command name.
+	// The result will be: "mitte 'config' 'set' 'my-app' 'GREETING=Hello from Mitte'"
+	remoteCommand := "mitte " + strings.Join(quotedArgs, " ")
+
+	// 3. Pass this single, fully-formed command string to SSH.
 	sshCmd := exec.Command("ssh", cfg.RemoteSSH, remoteCommand)
 
 	sshCmd.Stdin = os.Stdin

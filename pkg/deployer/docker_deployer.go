@@ -7,8 +7,12 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+
+	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
 // DeployResult holds information about a deployed container.
@@ -28,6 +32,11 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 	}
 	defer cli.Close()
 
+	appState, err := state.Load(appName)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo cargar el estado para la app %s: %w", appName, err)
+	}
+
 	containerName := strings.ToLower(appName)
 
 	// --- 1. Stop and remove any existing container for this app ---
@@ -36,10 +45,16 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 	_ = cli.ContainerStop(ctx, containerName, container.StopOptions{})
 	_ = cli.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true})
 
+	envVars := []string{}
+	for key, value := range appState.EnvVars {
+		envVars = append(envVars, fmt.Sprintf("%s=%s", key, value))
+	}
+
 	// --- 2. Create the new container ---
 	fmt.Fprintf(os.Stderr, "-----> Creating new container from image %s\n", imageTag)
 	containerConfig := &container.Config{
 		Image: imageTag,
+		Env:   envVars,
 	}
 
 	hostConfig := &container.HostConfig{
@@ -60,6 +75,7 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 
 	// --- 4. Get the host port using our new helper function ---
 	// We assume port 80/tcp for now, as that's what your nginx Dockerfile exposes.
+	// TODO: Make this configurable.
 	hostPort, err := GetContainerHostPort(ctx, cli, createResp.ID, "80/tcp")
 	if err != nil {
 		return nil, err
@@ -97,4 +113,36 @@ func GetContainerHostPort(ctx context.Context, cli *client.Client, containerIDOr
 	// The first binding is the one we want.
 	hostPort := portBindings[0].HostPort
 	return hostPort, nil
+}
+
+// GetLatestImageForApp finds the most recently built Docker image for a given app.
+func GetLatestImageForApp(ctx context.Context, appName string) (string, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return "", fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	// The filter argument tells the Docker daemon to only return images
+	// with a tag that matches the app's name (e.g., "my-app:*").
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("reference", fmt.Sprintf("%s:*", appName))
+
+	images, err := cli.ImageList(ctx, image.ListOptions{Filters: filterArgs})
+	if err != nil {
+		return "", fmt.Errorf("failed to list images for app '%s': %w", appName, err)
+	}
+
+	if len(images) == 0 {
+		return "", fmt.Errorf("no images found matching app name '%s'", appName)
+	}
+
+	// We assume the first image in the list is the most recent one.
+	// The RepoTags field can contain multiple tags; we use the first one.
+	if len(images[0].RepoTags) == 0 {
+		return "", fmt.Errorf("image %s has no tags", images[0].ID)
+	}
+	latestImageTag := images[0].RepoTags[0]
+
+	return latestImageTag, nil
 }
