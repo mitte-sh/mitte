@@ -146,3 +146,60 @@ func GetLatestImageForApp(ctx context.Context, appName string) (string, error) {
 
 	return latestImageTag, nil
 }
+
+// StopAndRemoveContainer forcefully stops and removes a container by name.
+// It does not return an error if the container does not exist.
+func StopAndRemoveContainer(ctx context.Context, appName string) error {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	containerName := strings.ToLower(appName)
+	fmt.Fprintf(os.Stderr, "-----> Stopping and removing container '%s'...\n", containerName)
+
+	// We don't care about errors here, as the container might already be gone.
+	_ = cli.ContainerStop(ctx, containerName, container.StopOptions{})
+	_ = cli.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true})
+
+	fmt.Fprintln(os.Stderr, "-----> Container stopped and removed.")
+	return nil
+}
+
+// PruneAppImages removes all Docker images associated with a given application.
+func PruneAppImages(ctx context.Context, appName string) error {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	fmt.Fprintf(os.Stderr, "-----> Pruning images for app '%s'...\n", appName)
+
+	// Create a filter to find all images with a tag like "appname:*"
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("reference", fmt.Sprintf("%s:*", appName))
+
+	images, err := cli.ImageList(ctx, image.ListOptions{Filters: filterArgs})
+	if err != nil {
+		return fmt.Errorf("failed to list images for pruning: %w", err)
+	}
+
+	if len(images) == 0 {
+		fmt.Fprintln(os.Stderr, "-----> No images to prune.")
+		return nil
+	}
+
+	for _, img := range images {
+		fmt.Fprintf(os.Stderr, "       - Removing image %s\n", img.ID[:12])
+		// We don't stop on the first error, try to delete as many as possible.
+		_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: true})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "         Warning: could not remove image %s: %v\n", img.ID[:12], err)
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "-----> Image pruning complete.")
+	return nil
+}

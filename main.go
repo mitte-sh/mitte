@@ -31,18 +31,16 @@ func main() {
 		return
 	}
 
-	// Commands that MUST be executed directly, never proxied over SSH.
-	directCommands := map[string]bool{
+	// Commands that MUST be executed directly on the machine where they are typed.
+	localOnlyCommands := map[string]bool{
 		"remote": true,
-		"setup":  true, // Server-side admin command
-		"keys":   true, // Server-side admin command
 		"help":   true, // Cobra handles 'help'
 		"--help": true,
 		"-h":     true,
 		// TODO: Add `version` command
 		// "version": true,
 	}
-	if directCommands[args[0]] {
+	if localOnlyCommands[args[0]] {
 		cmd.Execute()
 		return
 	}
@@ -56,7 +54,20 @@ func main() {
 		return
 	}
 
-	// 1. Manually quote each argument to make it safe for the remote shell.
+	// Define which command groups require sudo privileges on the server.
+	sudoCommands := map[string]bool{
+		"apps":    true, // create, destroy
+		"domains": true, // add, remove (modifies Caddy files)
+		"config":  true, // set, unset (redeploys, which might chown files)
+		"keys":    true, // modifies /home/mitte/.ssh/
+		"setup":   true, // the main server setup
+		// `restart` would also go here.
+	}
+
+	// Check if the first argument (the command group) requires sudo.
+	requiresSudo := sudoCommands[args[0]]
+
+	// Manually quote each argument to make it safe for the remote shell.
 	quotedArgs := []string{}
 	for _, arg := range args {
 		// This wraps each argument in single quotes, and correctly handles
@@ -65,11 +76,17 @@ func main() {
 		quotedArgs = append(quotedArgs, quotedArg)
 	}
 
-	// 2. Join the *quoted* arguments and prefix with the command name.
-	// The result will be: "mitte 'config' 'set' 'my-app' 'GREETING=Hello from Mitte'"
-	remoteCommand := "mitte " + strings.Join(quotedArgs, " ")
+	// Construct the final remote command string, prepending `sudo` if needed.
+	var remoteCommand string
+	if requiresSudo {
+		// Example result: "sudo mitte 'apps' 'create' 'myapp'"
+		remoteCommand = "sudo mitte " + strings.Join(quotedArgs, " ")
+	} else {
+		// Example result: "mitte 'logs' 'myapp'"
+		remoteCommand = "mitte " + strings.Join(quotedArgs, " ")
+	}
 
-	// 3. Pass this single, fully-formed command string to SSH.
+	// Fully-formed command string to SSH.
 	sshCmd := exec.Command("ssh", cfg.RemoteSSH, remoteCommand)
 
 	sshCmd.Stdin = os.Stdin
