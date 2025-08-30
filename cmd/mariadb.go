@@ -1,0 +1,329 @@
+package cmd
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/term"
+	"github.com/spf13/cobra"
+
+	"github.com/mitteapp/mitteapp/pkg/actions"
+	"github.com/mitteapp/mitteapp/pkg/services"
+	"github.com/mitteapp/mitteapp/pkg/state"
+)
+
+var mariadbCmd = &cobra.Command{
+	Use:   "mariadb",
+	Short: "Manage MariaDB database services",
+}
+
+var mariadbListCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all managed MariaDB instances",
+	Aliases: []string{"ls"},
+	Run: func(cmd *cobra.Command, args []string) {
+		serviceType := "mariadb"
+		serviceDir := filepath.Join("/var/lib/mitte/services", serviceType)
+
+		files, err := os.ReadDir(serviceDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Println("No MariaDB services have been created yet.")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Error: Could not read the services directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(files) == 0 {
+			fmt.Println("No MariaDB services found.")
+			return
+		}
+
+		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+			os.Exit(1)
+		}
+		defer cli.Close()
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		defer w.Flush()
+		fmt.Fprintln(w, "INSTANCE NAME\tSTATUS\tINTERNAL HOST\tVERSION")
+
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+				continue
+			}
+			instanceName := strings.TrimSuffix(file.Name(), ".json")
+
+			var status, version string
+
+			inspect, err := cli.ContainerInspect(context.Background(), instanceName)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					status = "stopped"
+					version = "(unknown)"
+				} else {
+					status = "error"
+				}
+			} else {
+				status = inspect.State.Status
+				version = filepath.Base(inspect.Config.Image)
+			}
+
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", instanceName, status, instanceName, version)
+		}
+	},
+}
+
+var mariadbCreateCmd = &cobra.Command{
+	Use:   "create <instance-name>",
+	Short: "Create a new MariaDB instance",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		ctx := context.Background()
+
+		version, _ := cmd.Flags().GetString("version")
+
+		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
+
+		// Check if it already exists
+		svc, _ := state.LoadService("mariadb", instanceName)
+		if svc.RootPassword != "" {
+			fmt.Fprintf(os.Stderr, "Error: A MariaDB service named '%s' already exists.\n", instanceName)
+			os.Exit(1)
+		}
+
+		// Generate a secure password
+		password, err := generatePassword(32)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+			os.Exit(1)
+		}
+
+		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+			os.Exit(1)
+		}
+		defer cli.Close()
+
+		// 1. Pull Image
+		imageName := "mariadb:" + version
+		fmt.Fprintf(os.Stderr, "-----> Pulling image %s...\n", imageName)
+		out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to pull MariaDB image: %v\n", err)
+			os.Exit(1)
+		}
+		defer out.Close()
+
+		// Show friendly progress
+		fd, isTerminal := term.GetFdInfo(os.Stderr)
+		if err := jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, fd, isTerminal, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to read image pull progress: %v\n", err)
+			os.Exit(1)
+		}
+
+		// 2. Create Volume
+		fmt.Fprintf(os.Stderr, "-----> Creating data volume...\n")
+		volumeName := "mitte-mariadb-data-" + instanceName
+		_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
+			Name: volumeName,
+			Labels: map[string]string{
+				"app.mitte.managed-by": "mitte",
+				"app.mitte.service":    instanceName,
+				"app.mitte.type":       "mariadb",
+			},
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to create data volume: %v\n", err)
+			os.Exit(1)
+		}
+
+		// 3. Create Container
+		fmt.Fprintf(os.Stderr, "-----> Creating container...\n")
+		envVars := []string{
+			"MARIADB_ROOT_PASSWORD=" + password,
+		}
+		containerConfig := &container.Config{
+			Image: imageName,
+			Env:   envVars,
+		}
+		hostConfig := &container.HostConfig{
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeVolume,
+					Source: volumeName,
+					Target: "/var/lib/mysql",
+				},
+			},
+			RestartPolicy: container.RestartPolicy{
+				Name: "always",
+			},
+		}
+
+		resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, instanceName)
+		if err != nil {
+			if errdefs.IsConflict(err) {
+				fmt.Fprintf(os.Stderr, "Error: A container named '%s' already exists. Please choose a different name or remove the existing container.\n", instanceName)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create MariaDB container: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		// 4. Start Container
+		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to start MariaDB container: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Save the state
+		svc.RootPassword = password
+		svc.InternalHost = instanceName
+		svc.Version = version
+		svc.Port = 3306
+		svc.Username = "root"
+		if err := svc.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\nSuccess! MariaDB instance '%s' created.\n", instanceName)
+		fmt.Printf("The root password is: %s\n", password)
+		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
+	},
+}
+
+var mariadbDestroyCmd = &cobra.Command{
+	Use:     "destroy <instance-name>",
+	Short:   "Permanently destroy a MariaDB instance",
+	Long:    "This will stop and remove the container AND permanently delete its data volume. THIS ACTION IS IRREVERSIBLE.",
+	Aliases: []string{"remove"},
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		ctx := context.Background()
+
+		// Safety confirmation
+		fmt.Printf(" !    WARNING: This will permanently delete the MariaDB instance '%s' and all of its data.\n", instanceName)
+		fmt.Printf(" >    Please type '%s' to confirm: ", instanceName)
+		reader := bufio.NewReader(os.Stdin)
+		confirmation, _ := reader.ReadString('\n')
+		if strings.TrimSpace(confirmation) != instanceName {
+			fmt.Println(" !    Confirmation failed. Aborting.")
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "-----> Destroying MariaDB instance '%s'...\n", instanceName)
+
+		// 1. Destroy Docker resources (container and volume)
+		if err := services.DestroyMariaDB(ctx, instanceName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to destroy MariaDB resources: %v\n", err)
+			os.Exit(1)
+		}
+
+		// 2. Delete the state file
+		svc, _ := state.LoadService("mariadb", instanceName)
+		if err := svc.Delete(); err != nil {
+			// This is not a fatal error, but we should warn the user.
+			fmt.Fprintf(os.Stderr, "Warning: Failed to delete service state file: %v\n", err)
+		}
+
+		fmt.Printf("Success! MariaDB instance '%s' destroyed.\n", instanceName)
+	},
+}
+
+var mariadbLinkCmd = &cobra.Command{
+	Use:   "link <instance-name> <app-name>",
+	Short: "Link a MariaDB instance to an application",
+	Long:  "This will set the DATABASE_URL environment variable on the application and redeploy it.",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		appName := args[1]
+		serviceType := "mariadb"
+
+		fmt.Fprintf(os.Stderr, "-----> Linking MariaDB instance '%s' to app '%s'...\n", instanceName, appName)
+
+		// 1. Load the service state to get connection details
+		service, err := state.LoadService(serviceType, instanceName)
+		if err != nil || service.RootPassword == "" {
+			fmt.Fprintf(os.Stderr, "Error: Could not find MariaDB instance '%s'.\n", instanceName)
+			os.Exit(1)
+		}
+
+		// 2. Load the application state
+		app, err := state.Load(appName)
+		if err != nil || len(app.Domains) == 0 { // Check domains to see if app exists
+			fmt.Fprintf(os.Stderr, "Error: Could not find application '%s'.\n", appName)
+			os.Exit(1)
+		}
+
+		// 3. Construct the DATABASE_URL
+		// Format: mysql://user:password@host:port/database
+		// The default database in the MariaDB image is also called 'mariadb'
+		databaseURL := fmt.Sprintf("mysql://%s:%s@%s:%d/mariadb",
+			service.Username,
+			service.RootPassword,
+			service.InternalHost,
+			service.Port,
+		)
+
+		// 4. Set the environment variable on the app
+		fmt.Fprintln(os.Stderr, "-----> Setting DATABASE_URL config variable...")
+		app.EnvVars["DATABASE_URL"] = databaseURL
+		if err := app.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to save application state with new DATABASE_URL: %v\n", err)
+			os.Exit(1)
+		}
+
+		// 5. Redeploy the application to apply the change
+		fmt.Fprintln(os.Stderr, "-----> Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to redeploy application '%s': %v\n", appName, err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Success! Linked and redeployed. Your app can now connect to the database via the DATABASE_URL environment variable.")
+	},
+}
+
+func init() {
+	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
+	mariadbCmd.AddCommand(mariadbListCmd)
+	mariadbCmd.AddCommand(mariadbCreateCmd)
+	mariadbCmd.AddCommand(mariadbDestroyCmd)
+	mariadbCmd.AddCommand(mariadbLinkCmd)
+	rootCmd.AddCommand(mariadbCmd)
+}
+
+func generatePassword(length int) (string, error) {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+	for i := range result {
+		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = chars[idx.Int64()]
+	}
+	return string(result), nil
+}

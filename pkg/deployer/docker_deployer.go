@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
@@ -62,7 +63,13 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 		RestartPolicy:   container.RestartPolicy{Name: "always"},
 	}
 
-	createResp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"mitte": {},
+		},
+	}
+
+	createResp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, containerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}

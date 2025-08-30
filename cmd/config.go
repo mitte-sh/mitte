@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/deployer"
-	"github.com/mitteapp/mitteapp/pkg/router"
+	"github.com/mitteapp/mitteapp/pkg/actions"
 	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
@@ -80,7 +78,7 @@ var configSetCmd = &cobra.Command{
 
 		if !noRestart {
 			fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
-			if err := redeployApp(appName); err != nil {
+			if err := actions.RestartApp(appName); err != nil {
 				fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
 				os.Exit(1)
 			}
@@ -121,7 +119,7 @@ var configUnsetCmd = &cobra.Command{
 
 		if !noRestart {
 			fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
-			if err := redeployApp(appName); err != nil {
+			if err := actions.RestartApp(appName); err != nil {
 				fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
 				os.Exit(1)
 			}
@@ -130,27 +128,6 @@ var configUnsetCmd = &cobra.Command{
 			fmt.Printf("Configuration updated for '%s'. Run a deploy or restart for changes to take effect.\n", appName)
 		}
 	},
-}
-
-// redeployApp takes an existing application and redeploys it with its latest image
-// and the most recent configuration.
-func redeployApp(appName string) error {
-	imageTag, err := deployer.GetLatestImageForApp(context.Background(), appName)
-	if err != nil {
-		return fmt.Errorf("could not find the latest image for %s. You may need to 'git push' first: %w", appName, err)
-	}
-
-	deployResult, err := deployer.Deploy(context.Background(), appName, imageTag)
-	if err != nil {
-		return err
-	}
-
-	app, err := state.Load(appName)
-	if err != nil {
-		return err
-	}
-
-	return router.SetAppRoutes(appName, app.Domains, deployResult.HostPort)
 }
 
 func init() {

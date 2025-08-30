@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -64,7 +65,20 @@ command that should be run on a fresh server.`,
 			log.Fatalf("Error configuring base domain: %v", err)
 		}
 
-		// --- 10. Final Steps ---
+		// --- 10. Create Mitte's Docker Network ---
+		fmt.Println("\n-- Creating 'mitte' Docker network --")
+		err := exec.Command("docker", "network", "inspect", "mitte").Run()
+		if err != nil {
+			fmt.Println("Network 'mitte' not found, creating...")
+			if err := runCommand("docker", "network", "create", "mitte"); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create 'mitte' network: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("   Network 'mitte' already exists.")
+		}
+
+		// --- 11. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 
