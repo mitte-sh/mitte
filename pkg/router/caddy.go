@@ -7,11 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mitteapp/mitteapp/pkg/config"
 )
 
 const caddyAdminAPI = "http://localhost:2019"
-
-const domainFilePath = "/etc/mitte/domain"
 
 // CaddyServerConfig maps to a server object in Caddy's config.
 // We use pointers and `omitempty` so we can differentiate between a field
@@ -35,7 +35,7 @@ const caddyfileDir = "/etc/caddy/Caddyfile.d"
 // CreateRouteFile creates a new Caddyfile in the Caddyfile.d directory
 // to route traffic for a given app, and then reloads Caddy.
 func CreateRouteFile(appName, hostPort string) error {
-	baseDomain, err := getBaseDomain()
+	baseDomain, err := config.GetBaseDomain()
 	if err != nil {
 		return err
 	}
@@ -148,19 +148,4 @@ func RouteExistsFile(appName string) (bool, error) {
 	// For any other error (e.g., sudo permission denied, command not found)
 	// or an unexpected exit code, we return the error.
 	return false, fmt.Errorf("error checking route file %s with sudo: %w", filePath, err)
-}
-
-func getBaseDomain() (string, error) {
-	content, err := os.ReadFile(domainFilePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("base domain not configured. Please run 'mitte setup' or create %s with your base domain", domainFilePath)
-		}
-		return "", fmt.Errorf("failed to read base domain from %s: %w", domainFilePath, err)
-	}
-	domain := strings.TrimSpace(string(content))
-	if domain == "" {
-		return "", fmt.Errorf("base domain file %s is empty", domainFilePath)
-	}
-	return domain, nil
 }

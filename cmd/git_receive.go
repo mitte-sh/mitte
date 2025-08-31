@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitteapp/mitteapp/pkg/builder"
+	"github.com/mitteapp/mitteapp/pkg/config"
 	"github.com/mitteapp/mitteapp/pkg/deployer"
 	"github.com/mitteapp/mitteapp/pkg/router"
 	"github.com/mitteapp/mitteapp/pkg/state"
@@ -159,7 +160,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	// If this is the first deployment, the app won't have any domains assigned.
 	// We create the default domain for it.
 	if len(app.Domains) == 0 {
-		baseDomain, err := getDomain()
+		baseDomain, err := config.GetBaseDomain()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 			os.Exit(1)
@@ -202,22 +203,4 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 func init() {
 	rootCmd.AddCommand(gitReceiveCmd)
-}
-
-// GetBaseDomain reads the configured base domain from /etc/mitte/domain.
-// This is the domain under which all applications will be hosted.
-func getDomain() (string, error) {
-	const domainFile = "/etc/mitte/domain"
-	domainBytes, err := os.ReadFile(domainFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("base domain not configured. Please run 'sudo mitte setup'")
-		}
-		return "", fmt.Errorf("failed to read domain configuration from %s: %w", domainFile, err)
-	}
-	domain := strings.TrimSpace(string(domainBytes))
-	if domain == "" {
-		return "", fmt.Errorf("domain configuration file %s is empty. Please run 'sudo mitte setup'", domainFile)
-	}
-	return domain, nil
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/mitteapp/mitteapp/pkg/config"
 	"github.com/mitteapp/mitteapp/pkg/deployer"
 	"github.com/mitteapp/mitteapp/pkg/router"
 	"github.com/mitteapp/mitteapp/pkg/state"
@@ -146,7 +147,7 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 	fmt.Fprintln(os.Stderr, "done.")
 
 	// --- 2. Create app state with a default domain ---
-	baseDomain, err := getBaseDomain()
+	baseDomain, err := config.GetBaseDomain()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
@@ -285,20 +286,4 @@ func formatTimeAgo(t time.Time) string {
 		return fmt.Sprintf("%d hours ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
-}
-
-func getBaseDomain() (string, error) {
-	const domainFile = "/etc/mitte/domain"
-	domainBytes, err := os.ReadFile(domainFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("base domain not configured. Please run 'sudo mitte setup'")
-		}
-		return "", fmt.Errorf("failed to read domain configuration from %s: %w", domainFile, err)
-	}
-	domain := strings.TrimSpace(string(domainBytes))
-	if domain == "" {
-		return "", fmt.Errorf("domain configuration file %s is empty. Please run 'sudo mitte setup'", domainFile)
-	}
-	return domain, nil
 }
