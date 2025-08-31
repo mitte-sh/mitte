@@ -61,6 +61,7 @@ func main() {
 		"config":  true, // set, unset (redeploys, which might chown files)
 		"keys":    true, // modifies /home/mitte/.ssh/
 		"setup":   true, // the main server setup
+		"mariadb": true, // create, destroy
 		// `restart` would also go here.
 	}
 
