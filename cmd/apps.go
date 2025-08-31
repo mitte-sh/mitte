@@ -202,8 +202,14 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 }
 
 func runAppsDestroy(cmd *cobra.Command, args []string) {
-	appName := args[0]
+	userInput := args[0]
 	ctx := context.Background()
+
+	appName, err := state.ResolveAppName(userInput)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Define color functions
 	redBold := color.New(color.FgRed, color.Bold)

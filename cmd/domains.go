@@ -25,8 +25,14 @@ var domainsAddCmd = &cobra.Command{
 	Short: "Add one or more custom domains to an app",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
 		domainsToAdd := args[1:]
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)
@@ -91,8 +97,14 @@ var domainsRemoveCmd = &cobra.Command{
 	Short: "Remove one or more custom domains from an app",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
 		domainsToRemove := args[1:]
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)
@@ -163,7 +175,13 @@ var domainsListCmd = &cobra.Command{
 	Short: "List all custom domains for an app",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)

@@ -10,6 +10,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/moby/moby/pkg/stdcopy"
 	"github.com/spf13/cobra"
+
+	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
 var logsCmd = &cobra.Command{
@@ -33,7 +35,7 @@ func init() {
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
-	appName := args[0]
+	userInput := args[0]
 	follow, _ := cmd.Flags().GetBool("follow")
 	tail, _ := cmd.Flags().GetString("tail")
 	ctx := context.Background()
@@ -50,6 +52,12 @@ func runLogs(cmd *cobra.Command, args []string) {
 		Follow:     follow,
 		Tail:       tail,
 		Timestamps: true,
+	}
+
+	appName, err := state.ResolveAppName(userInput)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// We use the appName as the containerName, as per our deployer's convention.

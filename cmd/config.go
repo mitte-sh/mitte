@@ -50,9 +50,15 @@ var configSetCmd = &cobra.Command{
 	Long:  "Sets environment variables for an application. By default, the application is redeployed to apply changes. Use the --no-restart flag to prevent this.",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
 		varsToSet := args[1:]
 		noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		app, err := state.Load(appName)
 		if err != nil {
@@ -96,9 +102,15 @@ var configUnsetCmd = &cobra.Command{
 	Long:  "Unsets environment variables from an application. By default, the application is redeployed to apply changes. Use the --no-restart flag to prevent this.",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
 		keysToUnset := args[1:]
 		noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		app, err := state.Load(appName)
 		if err != nil {

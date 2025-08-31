@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitteapp/mitteapp/pkg/actions"
+	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
 var appsRestartCmd = &cobra.Command{
@@ -15,7 +16,13 @@ var appsRestartCmd = &cobra.Command{
 	Long:  "Restarts an application by redeploying its most recent image with the latest configuration.",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		appName := args[0]
+		userInput := args[0]
+
+		appName, err := state.ResolveAppName(userInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
 		fmt.Fprintf(os.Stderr, "-----> Restarting application '%s'...\n", appName)
 

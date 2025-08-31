@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const appsDir = "/var/lib/mitte/apps"
@@ -51,4 +52,47 @@ func (a *App) Save() error {
 	}
 
 	return os.WriteFile(filePath, data, 0644)
+}
+
+// ResolveAppName takes a string that is either a short app name or a domain
+// and returns the canonical short app name. It returns an empty string and an
+// error if no matching app can be found.
+func ResolveAppName(nameOrDomain string) (string, error) {
+	const appsDir = "/var/lib/mitte/apps"
+
+	// First, check if the provided name is a direct match for an app.
+	// This is the most common case and is very fast.
+	filePath := filepath.Join(appsDir, nameOrDomain+".json")
+	if _, err := os.Stat(filePath); err == nil {
+		return nameOrDomain, nil
+	}
+
+	// If not a direct match, search through all apps to match by domain.
+	files, err := os.ReadDir(appsDir)
+	if err != nil {
+		return "", fmt.Errorf("could not read apps directory: %w", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		appName := strings.TrimSuffix(file.Name(), ".json")
+		app, err := Load(appName)
+		if err != nil {
+			// Silently ignore corrupted files during search, but maybe log this.
+			continue
+		}
+
+		for _, domain := range app.Domains {
+			if domain == nameOrDomain {
+				// Found a match! Return the app's short name.
+				return appName, nil
+			}
+		}
+	}
+
+	// If we finish the loop and find nothing, the app/domain doesn't exist.
+	return "", fmt.Errorf("application with name or domain '%s' not found", nameOrDomain)
 }
