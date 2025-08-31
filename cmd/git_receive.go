@@ -14,6 +14,7 @@ import (
 	"github.com/mitteapp/mitteapp/pkg/builder"
 	"github.com/mitteapp/mitteapp/pkg/deployer"
 	"github.com/mitteapp/mitteapp/pkg/router"
+	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
 // gitReceiveCmd represents the command triggered by SSH for a git push.
@@ -147,7 +148,34 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// --- 7. Update the routing layer ---
+	// Create or update the application's state file.
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Warning: Could not load application state: %v\n", err)
+		// We create a new empty app struct to proceed
+		app = &state.App{AppName: appName, EnvVars: make(map[string]string)}
+	}
+
+	// If this is the first deployment, the app won't have any domains assigned.
+	// We create the default domain for it.
+	if len(app.Domains) == 0 {
+		baseDomain, err := getDomain()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+			os.Exit(1)
+		}
+		defaultDomain := fmt.Sprintf("%s.%s", appName, baseDomain)
+		fmt.Fprintf(os.Stderr, "-----> Assigning default domain: %s\n", defaultDomain)
+		app.Domains = append(app.Domains, defaultDomain)
+	}
+
+	// Save the state to disk. This creates/updates the .json file.
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Warning: Failed to save application state: %v\n", err)
+		// We still continue, because the app is running. This is a critical warning, though.
+	}
+
+	// --- 8. Update the routing layer ---
 	// Check if route exists
 	exists, err := router.RouteExistsFile(appName)
 	if err != nil {
@@ -166,6 +194,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// --- Step 9: Final Success Message ---
 	fmt.Fprintln(os.Stderr, "-----> ✨ Deployment complete! ✨")
 	fmt.Fprintf(os.Stderr, "-----> App '%s' is live and running in container %s\n", appName, deployResult.ContainerID[:12])
 	// You should be able to access it at http://<appName>.<your_base_domain>
@@ -173,4 +202,22 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 func init() {
 	rootCmd.AddCommand(gitReceiveCmd)
+}
+
+// GetBaseDomain reads the configured base domain from /etc/mitte/domain.
+// This is the domain under which all applications will be hosted.
+func getDomain() (string, error) {
+	const domainFile = "/etc/mitte/domain"
+	domainBytes, err := os.ReadFile(domainFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("base domain not configured. Please run 'sudo mitte setup'")
+		}
+		return "", fmt.Errorf("failed to read domain configuration from %s: %w", domainFile, err)
+	}
+	domain := strings.TrimSpace(string(domainBytes))
+	if domain == "" {
+		return "", fmt.Errorf("domain configuration file %s is empty. Please run 'sudo mitte setup'", domainFile)
+	}
+	return domain, nil
 }
