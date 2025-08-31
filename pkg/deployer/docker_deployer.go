@@ -11,7 +11,6 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 
 	"github.com/mitteapp/mitteapp/pkg/state"
 )
@@ -74,16 +73,17 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
 
+	cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+
 	// --- 3. Start the container ---
 	fmt.Fprintf(os.Stderr, "-----> Starting container %s\n", createResp.ID[:12])
 	if err = cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
 
-	// --- 4. Get the host port using our new helper function ---
-	// We assume port 80/tcp for now, as that's what your nginx Dockerfile exposes.
+	// --- 4. Get the host port using our helper function ---
 	// TODO: Make this configurable.
-	hostPort, err := GetContainerHostPort(ctx, cli, createResp.ID, "80/tcp")
+	hostPort, err := GetContainerHostPort(ctx, cli, createResp.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,29 +97,43 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 
 // GetContainerHostPort inspects a running container and returns the host port
 // that is mapped to the specified internal container port (e.g., "80/tcp").
-func GetContainerHostPort(ctx context.Context, cli *client.Client, containerIDOrName, containerPort string) (string, error) {
+func GetContainerHostPort(ctx context.Context, cli *client.Client, containerIDOrName string) (string, error) {
 	// --- 1. Inspect the container ---
 	inspectResp, err := cli.ContainerInspect(ctx, containerIDOrName)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect container '%s': %w", containerIDOrName, err)
 	}
 
-	// The key for the port map is of type nat.Port, not a simple string.
-	// We must create it correctly.
-	port, err := nat.NewPort("tcp", strings.Split(containerPort, "/")[0])
-	if err != nil {
-		return "", fmt.Errorf("invalid containerPort format '%s': %w", containerPort, err)
+	// // The key for the port map is of type nat.Port, not a simple string.
+	// // We must create it correctly.
+	// port, err := nat.NewPort("tcp", strings.Split(containerPort, "/")[0])
+	// if err != nil {
+	// 	return "", fmt.Errorf("invalid containerPort format '%s': %w", containerPort, err)
+	// }
+	//
+	// // --- 2. Find the port binding ---
+	// portBindings := inspectResp.NetworkSettings.Ports[port]
+	// if len(portBindings) == 0 {
+	// 	return "", fmt.Errorf("container '%s' is running, but no host port mapping was found for container port %s", containerIDOrName, containerPort)
+	// }
+	//
+	// // The first binding is the one we want.
+	// hostPort := portBindings[0].HostPort
+	// return hostPort, nil
+
+	// 2. Discover the port
+	// The Ports map contains all port bindings. We'll iterate through it and grab the first one we find.
+	// This is a robust strategy for single-port web applications.
+	for _, portBindings := range inspectResp.NetworkSettings.Ports {
+		if len(portBindings) > 0 && portBindings[0].HostPort != "" {
+			// Found a valid binding, return its host port
+			return portBindings[0].HostPort, nil
+		}
 	}
 
-	// --- 2. Find the port binding ---
-	portBindings := inspectResp.NetworkSettings.Ports[port]
-	if len(portBindings) == 0 {
-		return "", fmt.Errorf("container '%s' is running, but no host port mapping was found for container port %s", containerIDOrName, containerPort)
-	}
+	// 3. If we finish the loop and find nothing, the container has no exposed ports.
+	return "", fmt.Errorf("container '%s' is running, but no exposed ports were found to be mapped to the host", containerIDOrName)
 
-	// The first binding is the one we want.
-	hostPort := portBindings[0].HostPort
-	return hostPort, nil
 }
 
 // GetLatestImageForApp finds the most recently built Docker image for a given app.

@@ -69,7 +69,7 @@ var domainsAddCmd = &cobra.Command{
 		defer cli.Close()
 
 		// Get the running container's port
-		port, err := deployer.GetContainerHostPort(context.Background(), cli, appName, "80/tcp")
+		port, err := deployer.GetContainerHostPort(context.Background(), cli, appName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Could not find a running container for app '%s'. Cannot update domain.\n", appName)
 			os.Exit(1)
@@ -140,7 +140,7 @@ var domainsRemoveCmd = &cobra.Command{
 			}
 			defer cli.Close()
 
-			port, err = deployer.GetContainerHostPort(context.Background(), cli, appName, "80/tcp")
+			port, err = deployer.GetContainerHostPort(context.Background(), cli, appName)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Could not find a running container for app '%s'. Cannot update domains.\n", appName)
 				os.Exit(1)
