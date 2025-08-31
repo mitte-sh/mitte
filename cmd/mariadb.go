@@ -252,32 +252,41 @@ var mariadbDestroyCmd = &cobra.Command{
 }
 
 var mariadbLinkCmd = &cobra.Command{
-	Use:   "link <instance-name> <app-name>",
+	Use:   "link <instance-name> <app-name> [VARIABLE_NAME]",
 	Short: "Link a MariaDB instance to an application",
-	Long:  "This will set the DATABASE_URL environment variable on the application and redeploy it.",
-	Args:  cobra.ExactArgs(2),
+	Long: `This will set a database connection string as an environment variable on the application and redeploy it.
+By default, the variable is named DATABASE_URL. You can specify a custom name as the third argument.`,
+	Args: cobra.RangeArgs(2, 3),
 	Run: func(cmd *cobra.Command, args []string) {
 		instanceName := args[0]
 		appName := args[1]
 		serviceType := "mariadb"
 
+		// 1. Determine the environment variable name to use.
+		var envVarName string
+		if len(args) == 3 {
+			envVarName = args[2] // Use the custom name provided by the user.
+		} else {
+			envVarName = "DATABASE_URL" // Fall back to the default.
+		}
+
 		fmt.Fprintf(os.Stderr, "-----> Linking MariaDB instance '%s' to app '%s'...\n", instanceName, appName)
 
-		// 1. Load the service state to get connection details
+		// 2. Load the service state to get connection details
 		service, err := state.LoadService(serviceType, instanceName)
 		if err != nil || service.RootPassword == "" {
 			fmt.Fprintf(os.Stderr, "Error: Could not find MariaDB instance '%s'.\n", instanceName)
 			os.Exit(1)
 		}
 
-		// 2. Load the application state
+		// 3. Load the application state
 		app, err := state.Load(appName)
 		if err != nil || len(app.Domains) == 0 { // Check domains to see if app exists
 			fmt.Fprintf(os.Stderr, "Error: Could not find application '%s'.\n", appName)
 			os.Exit(1)
 		}
 
-		// 3. Construct the DATABASE_URL
+		// 4. Construct the DATABASE_URL
 		// Format: mysql://user:password@host:port/database
 		// The default database in the MariaDB image is also called 'mariadb'
 		databaseURL := fmt.Sprintf("mysql://%s:%s@%s:%d/mariadb",
@@ -287,15 +296,15 @@ var mariadbLinkCmd = &cobra.Command{
 			service.Port,
 		)
 
-		// 4. Set the environment variable on the app
+		// 5. Set the environment variable on the app
 		fmt.Fprintln(os.Stderr, "-----> Setting DATABASE_URL config variable...")
-		app.EnvVars["DATABASE_URL"] = databaseURL
+		app.EnvVars[envVarName] = databaseURL
 		if err := app.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to save application state with new DATABASE_URL: %v\n", err)
 			os.Exit(1)
 		}
 
-		// 5. Redeploy the application to apply the change
+		// 6. Redeploy the application to apply the change
 		fmt.Fprintln(os.Stderr, "-----> Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to redeploy application '%s': %v\n", appName, err)
