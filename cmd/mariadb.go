@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
@@ -183,7 +184,13 @@ var mariadbCreateCmd = &cobra.Command{
 			},
 		}
 
-		resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, instanceName)
+		networkingConfig := &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				"mitte": {},
+			},
+		}
+
+		resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, instanceName)
 		if err != nil {
 			if errdefs.IsConflict(err) {
 				fmt.Fprintf(os.Stderr, "Error: A container named '%s' already exists. Please choose a different name or remove the existing container.\n", instanceName)
