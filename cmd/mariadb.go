@@ -100,6 +100,7 @@ var mariadbCreateCmd = &cobra.Command{
 		ctx := context.Background()
 
 		version, _ := cmd.Flags().GetString("version")
+		initialDatabase, _ := cmd.Flags().GetString("database")
 
 		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
 
@@ -162,6 +163,9 @@ var mariadbCreateCmd = &cobra.Command{
 		envVars := []string{
 			"MARIADB_ROOT_PASSWORD=" + password,
 		}
+		if initialDatabase != "" {
+			envVars = append(envVars, "MARIADB_DATABASE="+initialDatabase)
+		}
 		containerConfig := &container.Config{
 			Image: imageName,
 			Env:   envVars,
@@ -197,6 +201,7 @@ var mariadbCreateCmd = &cobra.Command{
 
 		// Save the state
 		svc.RootPassword = password
+		svc.DatabaseName = initialDatabase
 		svc.InternalHost = instanceName
 		svc.Version = version
 		svc.Port = 3306
@@ -207,6 +212,9 @@ var mariadbCreateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\nSuccess! MariaDB instance '%s' created.\n", instanceName)
+		if initialDatabase != "" {
+			fmt.Printf("Initial database '%s' has also been created.\n", initialDatabase)
+		}
 		fmt.Printf("The root password is: %s\n", password)
 		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
 	},
@@ -287,13 +295,18 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 		}
 
 		// 4. Construct the DATABASE_URL
+		dbToUse := service.DatabaseName
+		if dbToUse == "" {
+			dbToUse = "mariadb"
+		}
+
 		// Format: mysql://user:password@host:port/database
-		// The default database in the MariaDB image is also called 'mariadb'
-		databaseURL := fmt.Sprintf("mysql://%s:%s@%s:%d/mariadb",
+		databaseURL := fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
 			service.Username,
 			service.RootPassword,
 			service.InternalHost,
 			service.Port,
+			dbToUse,
 		)
 
 		// 5. Set the environment variable on the app
@@ -317,6 +330,7 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 
 func init() {
 	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
+	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
 	mariadbCmd.AddCommand(mariadbListCmd)
 	mariadbCmd.AddCommand(mariadbCreateCmd)
 	mariadbCmd.AddCommand(mariadbDestroyCmd)
