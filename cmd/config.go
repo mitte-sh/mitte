@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -142,6 +143,85 @@ var configUnsetCmd = &cobra.Command{
 	},
 }
 
+var configEditCmd = &cobra.Command{
+	Use:   "edit <app-name>",
+	Short: "Edit environment variables in a text editor",
+	Long: `Opens your default editor to bulk-edit environment variables.
+Variables are presented in a KEY=VALUE format. Save and close the editor
+to apply the changes, which will trigger a redeployment.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		appName, err := state.ResolveAppName(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		// 1. Fetch current environment variables by running `mitte config list`.
+		fmt.Fprintf(os.Stderr, "-----> Fetching current environment for '%s'...\n", appName)
+		listCmd := exec.Command("mitte", "config", "list", appName)
+		currentEnvBytes, err := listCmd.Output()
+		if err != nil {
+			// Handle cases where the app has no env vars yet.
+			if !strings.Contains(string(currentEnvBytes), "No environment variables") {
+				fmt.Fprintf(os.Stderr, "Error fetching current config: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// 2. Open the user's default editor with the current env vars.
+		newEnvContent, err := openInEditor(string(currentEnvBytes))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
+			os.Exit(1)
+		}
+
+		// If the user didn't change anything, we're done.
+		if newEnvContent == string(currentEnvBytes) {
+			fmt.Println("No changes detected. Aborting.")
+			return
+		}
+
+		// 3. Calculate the difference between the old and new env vars.
+		oldVars := parseEnv(string(currentEnvBytes))
+		newVars := parseEnv(newEnvContent)
+
+		varsToSet, varsToUnset := diffEnv(oldVars, newVars)
+
+		// 4. Call `mitte config set` and `mitte config unset` to apply changes.
+		if len(varsToSet) > 0 {
+			fmt.Fprintf(os.Stderr, "-----> Setting %d variable(s)...\n", len(varsToSet))
+			setArgs := []string{"config", "set", appName}
+			setArgs = append(setArgs, "--no-restart")
+			setArgs = append(setArgs, varsToSet...)
+
+			if err := runMitteRemoteCommand(setArgs...); err != nil {
+				fmt.Fprintf(os.Stderr, "Error setting variables: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		if len(varsToUnset) > 0 {
+			fmt.Fprintf(os.Stderr, "-----> Unsetting %d variable(s)...\n", len(varsToUnset))
+			unsetArgs := []string{"config", "unset", appName}
+			unsetArgs = append(unsetArgs, "--no-restart")
+			unsetArgs = append(unsetArgs, varsToUnset...)
+			if err := runMitteRemoteCommand(unsetArgs...); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unsetting variables: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// 5. Trigger a final restart to apply all batched changes.
+		fmt.Fprintln(os.Stderr, "-----> Applying changes by restarting the application...")
+		if err := runMitteRemoteCommand("restart", appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error restarting application: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Environment successfully updated.")
+	},
+}
+
 func init() {
 	configSetCmd.Flags().Bool("no-restart", false, "Set the variable(s) without restarting the application")
 	configUnsetCmd.Flags().Bool("no-restart", false, "Unset the variable(s) without restarting the application")
@@ -149,5 +229,6 @@ func init() {
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configUnsetCmd)
+	configCmd.AddCommand(configEditCmd)
 	rootCmd.AddCommand(configCmd)
 }
