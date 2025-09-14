@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 
 	"github.com/mitteapp/mitteapp/pkg/state"
 )
@@ -24,7 +25,7 @@ type DeployResult struct {
 // Deploy creates and starts a new container for the given app and image.
 // It also stops and removes any previous container for that app.
 // It returns the new container's ID and its published host port.
-func Deploy(ctx context.Context, appName, imageTag string, volumes []string) (*DeployResult, error) {
+func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string) (*DeployResult, error) {
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -73,6 +74,30 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string) (*D
 		}
 	}
 
+	// --- 1.6. Parse port bindings ---
+	portBindings := make(nat.PortMap)
+	for _, port := range ports {
+		if port != "" {
+			// Support format: "host:container" (e.g., "9200:9200")
+			parts := strings.Split(port, ":")
+			if len(parts) == 2 {
+				hostPort := parts[0]
+				containerPort := parts[1]
+
+				// Create the container port with /tcp suffix
+				containerPortWithProto := nat.Port(containerPort + "/tcp")
+
+				// Add to port bindings
+				portBindings[containerPortWithProto] = []nat.PortBinding{
+					{
+						HostIP:   "0.0.0.0",
+						HostPort: hostPort,
+					},
+				}
+			}
+		}
+	}
+
 	// --- 2. Create the new container ---
 	fmt.Fprintf(os.Stderr, "-----> Creating new container from image %s\n", imageTag)
 	containerConfig := &container.Config{
@@ -81,9 +106,9 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string) (*D
 	}
 
 	hostConfig := &container.HostConfig{
-		PublishAllPorts: true,
-		RestartPolicy:   container.RestartPolicy{Name: "always"},
-		Binds:           binds,
+		PortBindings:  portBindings,
+		RestartPolicy: container.RestartPolicy{Name: "always"},
+		Binds:         binds,
 	}
 
 	networkingConfig := &network.NetworkingConfig{
@@ -106,12 +131,11 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string) (*D
 	}
 
 	// --- 4. Get the host port using our helper function ---
-	// TODO: Make this configurable.
 	hostPort, err := GetContainerHostPort(ctx, cli, createResp.ID)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "-----> Container is running. Port 80 is mapped to host port %s\n", hostPort)
+	fmt.Fprintf(os.Stderr, "-----> Container is running. First mapped port: %s\n", hostPort)
 
 	return &DeployResult{
 		ContainerID: createResp.ID,
