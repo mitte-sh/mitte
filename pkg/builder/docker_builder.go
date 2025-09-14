@@ -34,7 +34,7 @@ type StreamLine struct {
 
 // BuildImage uses the Docker SDK to build an image from a given directory.
 // It returns the unique image tag and any error that occurred.
-func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchName string) (string, error) {
+func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchName string, envVars map[string]string) (string, error) {
 	fmt.Fprintln(os.Stderr, "-----> Connecting to Docker daemon...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -106,11 +106,19 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 
 	// --- 3. Build the Docker image ---
 	fmt.Fprintln(os.Stderr, "-----> Building image... (This may take a moment)")
+
+	// Convert environment variables to build args for Docker
+	buildArgs := make(map[string]*string)
+	for key, value := range envVars {
+		buildArgs[key] = &value
+	}
+
 	buildOptions := types.ImageBuildOptions{
 		Tags:        []string{imageTag},
 		Dockerfile:  "Dockerfile",
 		Remove:      true, // Remove intermediate containers after a successful build
 		ForceRemove: true,
+		BuildArgs:   buildArgs,
 	}
 
 	buildResponse, err := cli.ImageBuild(ctx, buildContext, buildOptions)

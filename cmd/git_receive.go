@@ -135,7 +135,15 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 	// --- 5. Trigger the Build (Placeholder) ---
 	fmt.Fprintln(os.Stderr, "-----> Starting build process...")
-	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy)
+
+	// Load app state to get environment variables for build args
+	appState, err := state.Load(appName)
+	if err != nil {
+		// If app doesn't exist yet, create with empty env vars
+		appState = &state.App{AppName: appName, EnvVars: make(map[string]string)}
+	}
+
+	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy, appState.EnvVars)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
 		os.Exit(1)
