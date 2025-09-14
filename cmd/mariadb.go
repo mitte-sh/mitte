@@ -163,6 +163,7 @@ var mariadbCreateCmd = &cobra.Command{
 		fmt.Fprintf(os.Stderr, "-----> Creating container...\n")
 		envVars := []string{
 			"MARIADB_ROOT_PASSWORD=" + password,
+			"MARIADB_ROOT_HOST=%",
 		}
 		if initialDatabase != "" {
 			envVars = append(envVars, "MARIADB_DATABASE="+initialDatabase)
