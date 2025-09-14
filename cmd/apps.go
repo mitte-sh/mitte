@@ -18,6 +18,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/mitteapp/mitteapp/pkg/builder"
 	"github.com/mitteapp/mitteapp/pkg/config"
 	"github.com/mitteapp/mitteapp/pkg/deployer"
 	"github.com/mitteapp/mitteapp/pkg/router"
@@ -59,10 +60,21 @@ THIS ACTION IS IRREVERSIBLE.`,
 	Run:     runAppsDestroy,
 }
 
+var appsBuildCmd = &cobra.Command{
+	Use:   "build <app-name>",
+	Short: "Build and deploy an application",
+	Long: `Build an application from its latest git code and deploy it.
+This will check out the latest code from the git repository, build a new Docker image
+using the current environment variables, and deploy the application.`,
+	Args: cobra.ExactArgs(1),
+	Run:  runAppsBuild,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
 	appsCmd.AddCommand(appsDestroyCmd)
+	appsCmd.AddCommand(appsBuildCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -278,6 +290,101 @@ func runAppsDestroy(cmd *cobra.Command, args []string) {
 	greenBold.Print("✅ Success! Application '")
 	whiteBold.Print(appName)
 	greenBold.Println("' has been destroyed.")
+}
+
+func runAppsBuild(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	fmt.Fprintf(os.Stderr, "-----> Building app '%s'...\n", appName)
+
+	// 1. Load app state
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		os.Exit(1)
+	}
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist or has no domains.\n", appName)
+		os.Exit(1)
+	}
+
+	// 2. Check if git repo exists
+	repoPath := filepath.Join("/var/lib/mitte/repos", appName+".git")
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: Git repository for '%s' does not exist. Please push code first.\n", appName)
+		os.Exit(1)
+	}
+
+	// 3. Add the repository to git safe directories to avoid ownership issues
+	fmt.Fprintf(os.Stderr, "-----> Configuring git safe directory...\n")
+	safeDirCmd := exec.Command("git", "config", "--global", "--add", "safe.directory", repoPath)
+	safeDirOutput, err := safeDirCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to add safe directory: %v\n%s", err, string(safeDirOutput))
+		// Continue anyway, as this might work on some systems
+	}
+
+	// 4. Determine the branch to deploy
+	getBranchCmd := exec.Command("sh", "-c", "git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' | head -n 1")
+	getBranchCmd.Dir = repoPath
+	branchOutput, err := getBranchCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to determine deployment branch: %v\n%s", err, string(branchOutput))
+		os.Exit(1)
+	}
+	branchToDeploy := strings.TrimSpace(string(branchOutput))
+	if branchToDeploy == "" {
+		fmt.Fprintf(os.Stderr, "Error: No branch found to deploy.\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "-----> Using branch '%s'\n", branchToDeploy)
+
+	// 5. Create temporary build directory
+	buildDir, err := os.MkdirTemp("", "mitte-build-"+appName+"-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to create temporary build directory: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(buildDir)
+
+	// 6. Check out the code
+	fmt.Fprintf(os.Stderr, "-----> Checking out latest code...\n")
+	archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchToDeploy, buildDir)
+	archiveCmd := exec.Command("sh", "-c", archiveCmdString)
+	archiveCmd.Dir = repoPath
+	archiveOutput, err := archiveCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to archive code: %v\n%s", err, string(archiveOutput))
+		os.Exit(1)
+	}
+
+	// 7. Build the image
+	fmt.Fprintf(os.Stderr, "-----> Building Docker image...\n")
+	imageTag, err := builder.BuildImage(ctx, appName, buildDir, repoPath, branchToDeploy, app.EnvVars)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Build failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 8. Deploy the new image
+	fmt.Fprintf(os.Stderr, "-----> Deploying new image...\n")
+	deployResult, err := deployer.Deploy(ctx, appName, imageTag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 9. Update routes
+	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
+	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Success! App '%s' rebuilt and redeployed.\n", appName)
+	fmt.Printf("Container ID: %s\n", deployResult.ContainerID[:12])
 }
 
 func formatTimeAgo(t time.Time) string {
