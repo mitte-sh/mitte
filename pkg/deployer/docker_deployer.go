@@ -24,7 +24,7 @@ type DeployResult struct {
 // Deploy creates and starts a new container for the given app and image.
 // It also stops and removes any previous container for that app.
 // It returns the new container's ID and its published host port.
-func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error) {
+func Deploy(ctx context.Context, appName, imageTag string, volumes []string) (*DeployResult, error) {
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -50,6 +50,29 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 		envVars = append(envVars, fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// --- 1.5. Parse volume bindings ---
+	var binds []string
+	for _, volume := range volumes {
+		if volume != "" {
+			// Support formats: "host:container" or "host:container:options"
+			parts := strings.Split(volume, ":")
+			if len(parts) >= 2 {
+				// Expand environment variables in host path
+				hostPath := os.ExpandEnv(parts[0])
+				containerPath := parts[1]
+
+				if len(parts) == 2 {
+					// Format: host:container
+					binds = append(binds, fmt.Sprintf("%s:%s", hostPath, containerPath))
+				} else if len(parts) == 3 {
+					// Format: host:container:options
+					options := parts[2]
+					binds = append(binds, fmt.Sprintf("%s:%s:%s", hostPath, containerPath, options))
+				}
+			}
+		}
+	}
+
 	// --- 2. Create the new container ---
 	fmt.Fprintf(os.Stderr, "-----> Creating new container from image %s\n", imageTag)
 	containerConfig := &container.Config{
@@ -60,6 +83,7 @@ func Deploy(ctx context.Context, appName, imageTag string) (*DeployResult, error
 	hostConfig := &container.HostConfig{
 		PublishAllPorts: true,
 		RestartPolicy:   container.RestartPolicy{Name: "always"},
+		Binds:           binds,
 	}
 
 	networkingConfig := &network.NetworkingConfig{

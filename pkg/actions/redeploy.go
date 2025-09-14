@@ -20,19 +20,19 @@ func RestartApp(appName string) error {
 		return fmt.Errorf("could not find the latest image for %s. You may need to 'git push' first: %w", appName, err)
 	}
 
-	// 2. Deploy the new container. This function handles stopping the old one,
-	// creating the new one, and injecting the latest environment variables from state.
-	deployResult, err := deployer.Deploy(ctx, appName, imageTag)
+	// 2. Load app state to get volumes configuration
+	appState, err := state.Load(appName)
 	if err != nil {
 		return err
 	}
 
-	// 3. Load the app's state to get its domains.
-	app, err := state.Load(appName)
+	// 3. Deploy the new container. This function handles stopping the old one,
+	// creating the new one, and injecting the latest environment variables from state.
+	deployResult, err := deployer.Deploy(ctx, appName, imageTag, appState.Volumes)
 	if err != nil {
 		return err
 	}
 
 	// 4. Update the router to point the app's domains to the new container's port.
-	return router.SetAppRoutes(appName, app.Domains, deployResult.HostPort)
+	return router.SetAppRoutes(appName, appState.Domains, deployResult.HostPort)
 }
