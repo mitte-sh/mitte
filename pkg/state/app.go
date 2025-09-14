@@ -11,9 +11,13 @@ import (
 const appsDir = "/var/lib/mitte/apps"
 
 type App struct {
-	AppName string            `json:"app_name"`
-	Domains []string          `json:"domains"`
-	EnvVars map[string]string `json:"env_vars"`
+	AppName       string            `json:"app_name"`
+	Domains       []string          `json:"domains"`
+	EnvVars       map[string]string `json:"env_vars"`
+	Image         string            `json:"image,omitempty"`          // Pre-built Docker image
+	Volumes       []string          `json:"volumes,omitempty"`        // Volume mounts (host:container)
+	Ports         []string          `json:"ports,omitempty"`          // Port mappings (host:container)
+	ContainerName string            `json:"container_name,omitempty"` // Custom container name
 }
 
 func Load(appName string) (*App, error) {
@@ -21,9 +25,13 @@ func Load(appName string) (*App, error) {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		// App doesn't exist yet, return a new, empty struct
 		return &App{
-			AppName: appName,
-			Domains: []string{},
-			EnvVars: make(map[string]string),
+			AppName:       appName,
+			Domains:       []string{},
+			EnvVars:       make(map[string]string),
+			Image:         "",
+			Volumes:       []string{},
+			Ports:         []string{},
+			ContainerName: "",
 		}, nil
 	}
 
