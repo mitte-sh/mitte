@@ -70,11 +70,22 @@ using the current environment variables, and deploy the application.`,
 	Run:  runAppsBuild,
 }
 
+var appsSetImageCmd = &cobra.Command{
+	Use:   "set-image <app-name> <image>",
+	Short: "Set the Docker image for an application",
+	Long: `Set a pre-built Docker image for an application.
+This allows deploying applications using existing Docker images instead of building from source code.
+Example: mitte apps set-image myapp nginx:latest`,
+	Args: cobra.ExactArgs(2),
+	Run:  runAppsSetImage,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
 	appsCmd.AddCommand(appsDestroyCmd)
 	appsCmd.AddCommand(appsBuildCmd)
+	appsCmd.AddCommand(appsSetImageCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -404,4 +415,50 @@ func formatTimeAgo(t time.Time) string {
 		return fmt.Sprintf("%d hours ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+}
+
+func runAppsSetImage(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	imageName := args[1]
+
+	// Validate image name format (basic validation)
+	if imageName == "" {
+		fmt.Fprintf(os.Stderr, "Error: Image name cannot be empty\n")
+		os.Exit(1)
+	}
+
+	// Basic validation - should contain at least one slash or be a simple name
+	if !strings.Contains(imageName, "/") && !strings.Contains(imageName, ":") {
+		// Allow simple names like "nginx" but warn about best practices
+		fmt.Fprintf(os.Stderr, "Warning: Using simple image name '%s'. Consider using a fully qualified name like '%s:latest'\n", imageName, imageName)
+	}
+
+	fmt.Fprintf(os.Stderr, "Setting image for app '%s' to '%s'... ", appName, imageName)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Set the image
+	app.Image = imageName
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured to use image '%s'\n", appName, imageName)
+	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
 }
