@@ -106,6 +106,25 @@ Examples:
 	Run:  runAppsSetPorts,
 }
 
+var appsDeployImageCmd = &cobra.Command{
+	Use:   "deploy-image <app-name>",
+	Short: "Deploy an application using a pre-built Docker image",
+	Long: `Deploy an application using a pre-built Docker image that has been configured with set-image.
+This will pull the image if it's not available locally, create and start a container with
+the configured volumes, ports, and container name, then update the routing configuration.
+
+Before running this command, you must:
+1. Create the app: mitte apps create <app-name>
+2. Set the image: mitte apps set-image <app-name> <image>
+3. Optionally configure volumes: mitte apps set-volumes <app-name> <volumes...>
+4. Optionally configure ports: mitte apps set-ports <app-name> <ports...>
+
+Examples:
+  mitte apps deploy-image myapp`,
+	Args: cobra.ExactArgs(1),
+	Run:  runAppsDeployImage,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
@@ -114,6 +133,7 @@ func init() {
 	appsCmd.AddCommand(appsSetImageCmd)
 	appsCmd.AddCommand(appsSetVolumesCmd)
 	appsCmd.AddCommand(appsSetPortsCmd)
+	appsCmd.AddCommand(appsDeployImageCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -641,4 +661,76 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 		fmt.Printf("  %d. %s\n", i+1, port)
 	}
 	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+}
+
+func runAppsDeployImage(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	fmt.Fprintf(os.Stderr, "-----> Deploying app '%s' with pre-built image...\n", appName)
+
+	// 1. Load app state
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		os.Exit(1)
+	}
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// 2. Check if image is configured
+	if app.Image == "" {
+		fmt.Fprintf(os.Stderr, "Error: No image configured for app '%s'. Set an image first with 'mitte apps set-image %s <image>'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// 3. Pull the image if it's not available locally
+	fmt.Fprintf(os.Stderr, "-----> Ensuring image '%s' is available...\n", app.Image)
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Check if image exists locally
+	_, _, err = cli.ImageInspectWithRaw(ctx, app.Image)
+	if err != nil {
+		// Image doesn't exist locally, pull it
+		fmt.Fprintf(os.Stderr, "-----> Pulling image '%s'...\n", app.Image)
+		reader, err := cli.ImagePull(ctx, app.Image, image.PullOptions{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Could not pull image '%s': %v\n", app.Image, err)
+			os.Exit(1)
+		}
+		io.Copy(io.Discard, reader) // Wait for the pull to complete but discard the noisy output
+		reader.Close()
+		fmt.Fprintf(os.Stderr, "-----> Image pulled successfully\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "-----> Image already available locally\n")
+	}
+	cli.Close()
+
+	// 4. Deploy the image
+	fmt.Fprintf(os.Stderr, "-----> Deploying container...\n")
+	deployResult, err := deployer.Deploy(ctx, appName, app.Image, app.Volumes, app.Ports, app.ContainerName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 5. Update routes
+	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
+	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Success! App '%s' deployed successfully.\n", appName)
+	fmt.Printf("Container ID: %s\n", deployResult.ContainerID[:12])
+	fmt.Printf("Host Port: %s\n", deployResult.HostPort)
+	if len(app.Domains) > 0 {
+		fmt.Printf("URL: http://%s\n", app.Domains[0])
+	}
 }
