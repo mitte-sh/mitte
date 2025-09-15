@@ -28,7 +28,7 @@ func RestartApp(appName string) error {
 
 	// 3. Deploy the new container. This function handles stopping the old one,
 	// creating the new one, and injecting the latest environment variables from state.
-	deployResult, err := deployer.Deploy(ctx, appName, imageTag, appState.Volumes, appState.Ports)
+	deployResult, err := deployer.Deploy(ctx, appName, imageTag, appState.Volumes, appState.Ports, appState.ContainerName)
 	if err != nil {
 		return err
 	}

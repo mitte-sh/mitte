@@ -25,7 +25,7 @@ type DeployResult struct {
 // Deploy creates and starts a new container for the given app and image.
 // It also stops and removes any previous container for that app.
 // It returns the new container's ID and its published host port.
-func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string) (*DeployResult, error) {
+func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string, containerName string) (*DeployResult, error) {
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -38,13 +38,17 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 		return nil, fmt.Errorf("no se pudo cargar el estado para la app %s: %w", appName, err)
 	}
 
-	containerName := strings.ToLower(appName)
+	// Use custom container name if provided, otherwise use app name
+	actualContainerName := containerName
+	if actualContainerName == "" {
+		actualContainerName = strings.ToLower(appName)
+	}
 
 	// --- 1. Stop and remove any existing container for this app ---
-	fmt.Fprintf(os.Stderr, "-----> Checking for existing container '%s' to stop...\n", containerName)
+	fmt.Fprintf(os.Stderr, "-----> Checking for existing container '%s' to stop...\n", actualContainerName)
 	// We ignore the error here because the container might not exist on the first deploy.
-	_ = cli.ContainerStop(ctx, containerName, container.StopOptions{})
-	_ = cli.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true})
+	_ = cli.ContainerStop(ctx, actualContainerName, container.StopOptions{})
+	_ = cli.ContainerRemove(ctx, actualContainerName, container.RemoveOptions{Force: true})
 
 	envVars := []string{}
 	for key, value := range appState.EnvVars {
@@ -117,7 +121,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 		},
 	}
 
-	createResp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, containerName)
+	createResp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, actualContainerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container: %w", err)
 	}
@@ -218,19 +222,23 @@ func GetLatestImageForApp(ctx context.Context, appName string) (string, error) {
 
 // StopAndRemoveContainer forcefully stops and removes a container by name.
 // It does not return an error if the container does not exist.
-func StopAndRemoveContainer(ctx context.Context, appName string) error {
+func StopAndRemoveContainer(ctx context.Context, appName string, containerName string) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
 	}
 	defer cli.Close()
 
-	containerName := strings.ToLower(appName)
-	fmt.Fprintf(os.Stderr, "-----> Stopping and removing container '%s'...\n", containerName)
+	// Use custom container name if provided, otherwise use app name
+	actualContainerName := containerName
+	if actualContainerName == "" {
+		actualContainerName = strings.ToLower(appName)
+	}
+	fmt.Fprintf(os.Stderr, "-----> Stopping and removing container '%s'...\n", actualContainerName)
 
 	// We don't care about errors here, as the container might already be gone.
-	_ = cli.ContainerStop(ctx, containerName, container.StopOptions{})
-	_ = cli.ContainerRemove(ctx, containerName, container.RemoveOptions{Force: true})
+	_ = cli.ContainerStop(ctx, actualContainerName, container.StopOptions{})
+	_ = cli.ContainerRemove(ctx, actualContainerName, container.RemoveOptions{Force: true})
 
 	fmt.Fprintln(os.Stderr, "-----> Container stopped and removed.")
 	return nil

@@ -192,7 +192,7 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 
 	// --- 4. Deploy the placeholder image ---
 	fmt.Fprintln(os.Stderr, "Deploying placeholder application...")
-	deployResult, err := deployer.Deploy(context.Background(), appName, placeholderImage, []string{}, []string{})
+	deployResult, err := deployer.Deploy(context.Background(), appName, placeholderImage, []string{}, []string{}, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Could not deploy placeholder: %v\n", err)
 		os.Exit(1)
@@ -262,7 +262,12 @@ func runAppsDestroy(cmd *cobra.Command, args []string) {
 
 	// --- 3. Stop and Remove Container ---
 	blue.Println("🐳 Stopping and removing container...")
-	if err := deployer.StopAndRemoveContainer(ctx, appName); err != nil {
+	app, err := state.Load(appName)
+	containerName := ""
+	if err == nil && app != nil {
+		containerName = app.ContainerName
+	}
+	if err := deployer.StopAndRemoveContainer(ctx, appName, containerName); err != nil {
 		yellow.Fprintf(os.Stderr, "⚠️  Warning: could not stop/remove container: %v\n", err)
 	}
 
@@ -370,7 +375,7 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 
 	// 8. Deploy the new image
 	fmt.Fprintf(os.Stderr, "-----> Deploying new image...\n")
-	deployResult, err := deployer.Deploy(ctx, appName, imageTag, app.Volumes, app.Ports)
+	deployResult, err := deployer.Deploy(ctx, appName, imageTag, app.Volumes, app.Ports, app.ContainerName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
 		os.Exit(1)
