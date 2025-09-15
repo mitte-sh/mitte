@@ -93,6 +93,19 @@ Examples:
 	Run:  runAppsSetVolumes,
 }
 
+var appsSetPortsCmd = &cobra.Command{
+	Use:   "set-ports <app-name> <port>...",
+	Short: "Set port mappings for an application",
+	Long: `Set port mappings for an application.
+Ports are specified as host:container pairs.
+Examples:
+  mitte apps set-ports myapp 8080:80
+  mitte apps set-ports myapp 9200:9200 3000:80
+  mitte apps set-ports myapp 8443:443 8080:8080`,
+	Args: cobra.MinimumNArgs(2),
+	Run:  runAppsSetPorts,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
@@ -100,6 +113,7 @@ func init() {
 	appsCmd.AddCommand(appsBuildCmd)
 	appsCmd.AddCommand(appsSetImageCmd)
 	appsCmd.AddCommand(appsSetVolumesCmd)
+	appsCmd.AddCommand(appsSetPortsCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -546,6 +560,85 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 	fmt.Printf("Success! App '%s' is now configured with %d volume mount(s)\n", appName, len(volumes))
 	for i, volume := range volumes {
 		fmt.Printf("  %d. %s\n", i+1, volume)
+	}
+	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+}
+
+func runAppsSetPorts(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	portArgs := args[1:]
+
+	// Validate that we have at least one port
+	if len(portArgs) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: At least one port mapping is required\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Setting ports for app '%s'... ", appName)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Validate and parse port mappings
+	var ports []string
+	for _, port := range portArgs {
+		if port == "" {
+			continue // Skip empty ports
+		}
+
+		// Validate port format (should contain exactly one colon)
+		if !strings.Contains(port, ":") {
+			fmt.Fprintf(os.Stderr, "\nError: Invalid port format '%s'. Use format: host:container\n", port)
+			fmt.Fprintf(os.Stderr, "Examples: 8080:80, 9200:9200, 3000:8080\n")
+			os.Exit(1)
+		}
+
+		// Basic validation - should have exactly 2 parts when split by colon
+		parts := strings.Split(port, ":")
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "\nError: Invalid port format '%s'. Expected exactly 2 parts separated by ':'\n", port)
+			os.Exit(1)
+		}
+
+		// Check for empty host or container ports
+		if parts[0] == "" || parts[1] == "" {
+			fmt.Fprintf(os.Stderr, "\nError: Empty host or container port in mapping '%s'\n", port)
+			os.Exit(1)
+		}
+
+		// Basic validation for numeric ports (optional, but helpful)
+		// We don't enforce this strictly since Docker allows named ports
+		if len(parts[0]) > 0 && len(parts[1]) > 0 {
+			// Could add more sophisticated port validation here if needed
+		}
+
+		ports = append(ports, port)
+	}
+
+	// Set the ports
+	app.Ports = ports
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured with %d port mapping(s)\n", appName, len(ports))
+	for i, port := range ports {
+		fmt.Printf("  %d. %s\n", i+1, port)
 	}
 	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
 }
