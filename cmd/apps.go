@@ -80,12 +80,26 @@ Example: mitte apps set-image myapp nginx:latest`,
 	Run:  runAppsSetImage,
 }
 
+var appsSetVolumesCmd = &cobra.Command{
+	Use:   "set-volumes <app-name> <volume>...",
+	Short: "Set volume mounts for an application",
+	Long: `Set volume mounts for an application.
+Volumes are specified as host:container pairs.
+Examples:
+  mitte apps set-volumes myapp /host/path:/container/path
+  mitte apps set-volumes myapp /host/path:/container/path:ro $HOME/data:/app/data
+  mitte apps set-volumes myapp /tmp/cache:/app/cache:rw`,
+	Args: cobra.MinimumNArgs(2),
+	Run:  runAppsSetVolumes,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
 	appsCmd.AddCommand(appsDestroyCmd)
 	appsCmd.AddCommand(appsBuildCmd)
 	appsCmd.AddCommand(appsSetImageCmd)
+	appsCmd.AddCommand(appsSetVolumesCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -460,5 +474,78 @@ func runAppsSetImage(cmd *cobra.Command, args []string) {
 	fmt.Fprintln(os.Stderr, "done.")
 
 	fmt.Printf("Success! App '%s' is now configured to use image '%s'\n", appName, imageName)
+	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+}
+
+func runAppsSetVolumes(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	volumeArgs := args[1:]
+
+	// Validate that we have at least one volume
+	if len(volumeArgs) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: At least one volume mapping is required\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Setting volumes for app '%s'... ", appName)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Validate and parse volume mappings
+	var volumes []string
+	for _, volume := range volumeArgs {
+		if volume == "" {
+			continue // Skip empty volumes
+		}
+
+		// Validate volume format (should contain at least one colon)
+		if !strings.Contains(volume, ":") {
+			fmt.Fprintf(os.Stderr, "\nError: Invalid volume format '%s'. Use format: host:container[:options]\n", volume)
+			fmt.Fprintf(os.Stderr, "Examples: /host/path:/container/path, /host/path:/container/path:ro\n")
+			os.Exit(1)
+		}
+
+		// Basic validation - should have 2 or 3 parts when split by colon
+		parts := strings.Split(volume, ":")
+		if len(parts) < 2 || len(parts) > 3 {
+			fmt.Fprintf(os.Stderr, "\nError: Invalid volume format '%s'. Expected 2 or 3 parts separated by ':'\n", volume)
+			os.Exit(1)
+		}
+
+		// Check for empty host or container paths
+		if parts[0] == "" || parts[1] == "" {
+			fmt.Fprintf(os.Stderr, "\nError: Empty host or container path in volume '%s'\n", volume)
+			os.Exit(1)
+		}
+
+		volumes = append(volumes, volume)
+	}
+
+	// Set the volumes
+	app.Volumes = volumes
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured with %d volume mount(s)\n", appName, len(volumes))
+	for i, volume := range volumes {
+		fmt.Printf("  %d. %s\n", i+1, volume)
+	}
 	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
 }
