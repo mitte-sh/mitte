@@ -1,0 +1,232 @@
+---
+
+**Mitte** is a personal PaaS (Platform-as-a-Service) implemented in a single, modern Go binary. It allows you to transform any server into your own private cloud deployment platform.
+
+Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hosted deployment workflow for any application. Deploy from source code using `git push` (with automatic building via Dockerfiles) or deploy pre-built Docker images directly for maximum flexibility and speed.
+
+### ✨ Features
+
+*   🚀 **Git Push to Deploy**: The classic Heroku workflow you know and love.
+*   📦 **Single Go Binary**: Incredibly easy to install and manage. No complex dependency chains.
+*   🔒 **Automatic HTTPS**: Caddy provides free, managed SSL certificates for all your apps, out-of-the-box.
+*   🏗️ **Dockerfile Support**: Automatically builds your application using your existing `Dockerfile`.
+*   🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
+*   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
+*   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
+
+### How It Works
+
+Mitte listens for `git push` commands over SSH. When it receives a push for an app, it follows one of two deployment paths:
+
+#### Source Code Deployment (Default)
+1.  **Receives** the source code in a bare git repository.
+2.  **Builds** the code into a Docker image using a `Dockerfile`.
+3.  **Runs** the image as a new container.
+4.  **Routes** traffic to the new container by dynamically updating its Caddy reverse proxy via Caddy's admin API.
+
+#### Pre-built Image Deployment
+1.  **Receives** the git push (for triggering deployment).
+2.  **Skips** the build process entirely.
+3.  **Pulls** the pre-configured Docker image.
+4.  **Runs** the image as a new container with custom volumes, ports, and environment variables.
+5.  **Routes** traffic to the new container.
+
+It's a simple, robust system that takes your code or pre-built images from commit to a running, publicly accessible application in seconds.
+
+### 🏁 Getting Started
+
+Transform your fresh server into a `mitte` host.
+
+**1. Run the Setup on Your Server**
+
+SSH into your server as root and run the installer. This script downloads the latest `mitte` binary and runs the `mitte setup` command for you.
+
+```bash
+# Run this on your DEDICATED server
+ssh root@your-server.com
+curl -sSL https://mitteapp.com/install.sh | bash
+```
+
+**2. Add Your Public SSH Key**
+
+On your local machine, add your SSH key to the `mitte` user on the server. This authorizes you to push code.
+
+```bash
+# Run this on your LOCAL machine
+cat ~/.ssh/id_rsa.pub | ssh root@your-server.com "mitte keys add my-laptop"
+```
+
+**3. Deploy Your First App**
+
+In your local git repository, add a `mitte` remote and push!
+
+```bash
+# In your project directory
+git remote add mitte mitte@your-server.com:my-awesome-app
+git push mitte main
+```
+
+**That's it!** Your application is now deployed at `http://my-awesome-app.your-server.com`.
+
+> **Note**: Mitte supports two deployment modes:
+> - **Source Code**: Push your code and let Mitte build it automatically
+> - **Pre-built Images**: Configure a Docker image and deploy it directly (see the Pre-built Images section below)
+
+### 🐳 Deploying Pre-built Images
+
+Mitte also supports deploying pre-built Docker images directly, perfect for applications that are already containerized or for faster deployments.
+
+**1. Create and Configure Your App**
+
+```bash
+# Create the app
+ssh root@your-server.com "mitte apps create my-image-app"
+
+# Set the Docker image
+ssh root@your-server.com "mitte apps set-image my-image-app nginx:latest"
+
+# Configure volumes (optional)
+ssh root@your-server.com "mitte apps set-volumes my-image-app /host/path:/container/path"
+
+# Configure ports (optional)
+ssh root@your-server.com "mitte apps set-ports my-image-app 8080:80"
+
+# Deploy the image
+ssh root@your-server.com "mitte apps deploy-image my-image-app"
+```
+
+**2. Deploy via Git Push (Alternative)**
+
+You can also trigger deployments of pre-built images using git push:
+
+```bash
+# In your project directory (even if empty)
+git init
+git remote add mitte mitte@your-server.com:my-image-app
+git push mitte main
+```
+
+The system will detect the pre-built image configuration and deploy it directly without building.
+
+### 📖 Command Reference
+
+Mitte comes with a powerful command-line interface to manage all aspects of your applications. All commands are run on your server (e.g., by running `ssh root@your-server.com "mitte <command>"`).
+
+#### App Management
+Manage your applications.
+
+```bash
+# List all deployed applications
+mitte apps list
+
+# Create a new, empty application
+# This is useful for configuring an app before the first push
+mitte apps create <appname>
+
+# Set a pre-built Docker image for an app
+mitte apps set-image <appname> <image>
+
+# Configure volume mounts for an app
+mitte apps set-volumes <appname> /host/path:/container/path
+
+# Configure port mappings for an app
+mitte apps set-ports <appname> 8080:80
+
+# Deploy a pre-built image (after configuration)
+mitte apps deploy-image <appname>
+
+# Permanently destroy an application and all its resources
+mitte apps destroy <appname>
+```
+
+#### Configuration (Env Vars)
+Manage environment variables for a specific application. Changes take effect by restarting the app's container unless `--no-restart` is specified.
+
+```bash
+# List all environment variables for an app
+mitte config list <appname>
+
+# Set one or more environment variables
+mitte config set <appname> DATABASE_URL=... SECRET_KEY=...
+
+# Set a variable witout restarting the application
+mitte config set <appname> KEY=VALUE --no-restart
+
+# Unset one or more environment variables
+mitte config unset <appname> SECRET_KEY
+```
+
+#### Domain Management
+Manage custom domains for an application. Mitte will automatically provision SSL certificates for all domains.
+
+```bash
+# List all domains for an app
+mitte domains list <appname>
+
+# Add a domain to an app
+mitte domains add <appname> www.my-awesome-app.com
+
+# Remove a domain from an app
+mitte domains remove <appname> www.my-awesome-app.com
+```
+
+#### Log Management
+View the logs of a running application.
+
+```bash
+# Show the most recent logs
+mitte logs <appname>
+
+# Show the last 100 log lines
+mitte logs <appname> -n 100
+
+# Follow the log output in real-time
+mitte logs <appname> --follow
+# or using the shorthand
+mitte logs <appname> -f
+
+# Follow the last 100 lines
+mitte logs <appname> -f -n 100
+```
+
+#### Access Management (SSH Keys)
+Manage the public SSH keys that are authorized to deploy applications.
+
+```bash
+# NOTE: These commands are typically run via SSH as shown in the "Getting Started" guide.
+# ssh root@your-server.com "mitte keys ..."
+
+# Add a new SSH key from stdin
+# cat ~/.ssh/id_rsa.pub | ssh root@your-server.com "mitte keys add <key-name>"
+
+# List all authorized SSH keys
+# ssh root@your-server.com "mitte keys list"
+
+# Remove an SSH key by its name
+# ssh root@your-server.com "mitte keys remove <key-name>"
+```
+
+#### Host & Project Management
+Utility commands for setting up the Mitte host and local project remotes.
+
+```bash
+# Initialize the Mitte host (run on the server)
+# This is handled automatically by the install script.
+mitte setup
+
+# Add a git remote to your local project (run on your local machine)
+# Replaces 'git remote add ...'
+mitte remote --host your-server.com --app my-awesome-app
+```
+
+### 💖 Contributing
+
+We would love your help to make `mitte` even better! If you're interested, please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for guidelines on how to get started.
+
+### 📜 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+
+[mitteapp.com](https://mitteapp.com)
