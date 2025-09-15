@@ -27,6 +27,8 @@ var gitReceiveCmd = &cobra.Command{
 }
 
 func runGitReceive(cmd *cobra.Command, args []string) {
+	var appState *state.App
+
 	// --- 1. Identify the App from the Environment ---
 	originalCmd := os.Getenv("SSH_ORIGINAL_COMMAND")
 	if originalCmd == "" {
@@ -44,7 +46,32 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	appName := matches[1]
 	fmt.Fprintf(os.Stderr, "-----> Mitte received push for app: %s\n", appName)
 
-	// --- 2. Ensure Repository Exists ---
+	// --- 2. Load App State Early ---
+	// Load app state to check if pre-built image is configured
+	appState, err := state.Load(appName)
+	if err != nil {
+		// If app doesn't exist yet, create with empty state
+		appState = &state.App{
+			AppName:       appName,
+			Domains:       []string{},
+			EnvVars:       make(map[string]string),
+			Image:         "",
+			Volumes:       []string{},
+			Ports:         []string{},
+			ContainerName: "",
+		}
+	}
+
+	// Check if app has pre-built image configured
+	hasPrebuiltImage := appState.Image != ""
+	if hasPrebuiltImage {
+		fmt.Fprintf(os.Stderr, "-----> Pre-built image configured: %s\n", appState.Image)
+		fmt.Fprintf(os.Stderr, "-----> Skipping build process, will deploy pre-built image\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "-----> No pre-built image configured, will build from source\n")
+	}
+
+	// --- 3. Ensure Repository Exists ---
 	// Define the path for the bare git repository for this app.
 	repoPath := filepath.Join("/var/lib/mitte/repos", appName+".git")
 
@@ -89,66 +116,82 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// --- 4. Check Out the Fresh Code ---
-	// Create a temporary directory to check out the source code for building.
-	buildDir, err := os.MkdirTemp("", "mitte-build-"+appName+"-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to create temporary build directory: %v\n", err)
-		os.Exit(1)
-	}
-	defer os.RemoveAll(buildDir) // Clean up the build directory when we're done.
+	// --- 4. Check Out the Fresh Code (skip for pre-built images) ---
+	var buildDir string
+	var branchToDeploy string
 
-	// Determine the branch to deploy by finding the most recently updated one.
-	getBranchCmd := exec.Command("sh", "-c", "git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' | head -n 1")
-	getBranchCmd.Dir = repoPath
-	branchOutput, err := getBranchCmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to determine deployment branch: %v\n%s", err, string(branchOutput))
-		os.Exit(1)
-	}
-	branchToDeploy := strings.TrimSpace(string(branchOutput))
+	if !hasPrebuiltImage {
+		// Create a temporary directory to check out the source code for building.
+		buildDir, err = os.MkdirTemp("", "mitte-build-"+appName+"-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to create temporary build directory: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(buildDir) // Clean up the build directory when we're done.
 
-	// If the push contained no branches (e.g., only tags), there's nothing to deploy.
-	if branchToDeploy == "" {
-		fmt.Fprintln(os.Stderr, "-----> No branch to deploy. Push a branch to trigger a deployment.")
-		os.Exit(0) // Exit gracefully, as this is not an error condition.
-	}
+		// Determine the branch to deploy by finding the most recently updated one.
+		getBranchCmd := exec.Command("sh", "-c", "git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' | head -n 1")
+		getBranchCmd.Dir = repoPath
+		branchOutput, err := getBranchCmd.CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to determine deployment branch: %v\n%s", err, string(branchOutput))
+			os.Exit(1)
+		}
+		branchToDeploy = strings.TrimSpace(string(branchOutput))
 
-	fmt.Fprintf(os.Stderr, "-----> Archiving branch '%s' for deployment...\n", branchToDeploy)
+		// If the push contained no branches (e.g., only tags), there's nothing to deploy.
+		if branchToDeploy == "" {
+			fmt.Fprintln(os.Stderr, "-----> No branch to deploy. Push a branch to trigger a deployment.")
+			os.Exit(0) // Exit gracefully, as this is not an error condition.
+		}
 
-	// This command creates a tar archive of the detected branch and pipes it
-	// to tar, which extracts it into our build directory.
-	archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchToDeploy, buildDir)
-	archiveCmd := exec.Command("sh", "-c", archiveCmdString)
+		fmt.Fprintf(os.Stderr, "-----> Archiving branch '%s' for deployment...\n", branchToDeploy)
 
-	// We execute this command from within the bare repository's directory.
-	archiveCmd.Dir = repoPath
+		// This command creates a tar archive of the detected branch and pipes it
+		// to tar, which extracts it into our build directory.
+		archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchToDeploy, buildDir)
+		archiveCmd := exec.Command("sh", "-c", archiveCmdString)
 
-	archiveOutput, err := archiveCmd.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to archive and extract code: %v\n", err)
-		fmt.Fprintln(os.Stderr, string(archiveOutput)) // Print the detailed error from git/tar
-		os.Exit(1)
-	}
+		// We execute this command from within the bare repository's directory.
+		archiveCmd.Dir = repoPath
 
-	fmt.Fprintf(os.Stderr, "-----> Code extracted to %s\n", buildDir)
+		archiveOutput, err := archiveCmd.CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to archive and extract code: %v\n", err)
+			fmt.Fprintln(os.Stderr, string(archiveOutput)) // Print the detailed error from git/tar
+			os.Exit(1)
+		}
 
-	// --- 5. Trigger the Build (Placeholder) ---
-	fmt.Fprintln(os.Stderr, "-----> Starting build process...")
-
-	// Load app state to get environment variables for build args
-	appState, err := state.Load(appName)
-	if err != nil {
-		// If app doesn't exist yet, create with empty env vars
-		appState = &state.App{AppName: appName, EnvVars: make(map[string]string)}
+		fmt.Fprintf(os.Stderr, "-----> Code extracted to %s\n", buildDir)
+	} else {
+		fmt.Fprintf(os.Stderr, "-----> Skipping code extraction (using pre-built image)\n")
 	}
 
-	imageTag, err := builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy, appState.EnvVars)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
-		os.Exit(1)
+	// --- 5. Build or Use Pre-built Image ---
+	var imageTag string
+
+	if hasPrebuiltImage {
+		// Use pre-built image directly
+		fmt.Fprintf(os.Stderr, "-----> Using pre-built image: %s\n", appState.Image)
+		imageTag = appState.Image
+	} else {
+		// Build from source code
+		fmt.Fprintln(os.Stderr, "-----> Starting build process...")
+
+		// Load app state to get environment variables for build args
+		appState, err = state.Load(appName)
+		if err != nil {
+			// If app doesn't exist yet, create with empty env vars
+			appState = &state.App{AppName: appName, EnvVars: make(map[string]string)}
+		}
+
+		imageTag, err = builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy, appState.EnvVars)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "-----> imageTag:", imageTag)
 	}
-	fmt.Fprintln(os.Stderr, "-----> imageTag:", imageTag)
 
 	// --- 6. Deploy the new image ---
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
@@ -159,12 +202,8 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 
 	// Create or update the application's state file.
-	app, err := state.Load(appName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n!! Warning: Could not load application state: %v\n", err)
-		// We create a new empty app struct to proceed
-		app = &state.App{AppName: appName, EnvVars: make(map[string]string)}
-	}
+	// Use the appState we loaded earlier to preserve pre-built image configuration
+	app := appState
 
 	// If this is the first deployment, the app won't have any domains assigned.
 	// We create the default domain for it.
