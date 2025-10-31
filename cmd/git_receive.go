@@ -175,21 +175,67 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "-----> Using pre-built image: %s\n", appState.Image)
 		imageTag = appState.Image
 	} else {
-		// Build from source code
+		// Determine build method: buildpack or Dockerfile
 		fmt.Fprintln(os.Stderr, "-----> Starting build process...")
 
-		// Load app state to get environment variables for build args
+		// Load app state to get environment variables and buildpack config
 		appState, err = state.Load(appName)
 		if err != nil {
 			// If app doesn't exist yet, create with empty env vars
-			appState = &state.App{AppName: appName, EnvVars: make(map[string]string)}
+			appState = &state.App{
+				AppName:      appName,
+				EnvVars:      make(map[string]string),
+				BuildpackEnv: make(map[string]string),
+			}
 		}
 
-		imageTag, err = builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy, appState.EnvVars)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n!! Building failed: %v\n", err)
-			os.Exit(1)
+		// Check build method priority:
+		// 1. Explicitly configured buildpack
+		// 2. Dockerfile (traditional)
+		// 3. Auto-detected buildpack
+		if appState.Buildpack != "" {
+			// Use configured buildpack
+			fmt.Fprintf(os.Stderr, "-----> Using configured buildpack: %s\n", appState.Buildpack)
+
+			buildpackConfig := &builder.BuildpackConfig{
+				BuildpackID:  appState.Buildpack,
+				BuildpackURI: appState.Buildpack, // For now, assume it's a URI
+				EnvVars:      appState.BuildpackEnv,
+			}
+
+			imageTag, err = builder.BuildWithBuildpack(context.Background(), appName, buildDir, repoPath, branchToDeploy, buildpackConfig, appState.EnvVars)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n!! Buildpack build failed: %v\n", err)
+				os.Exit(1)
+			}
+		} else if hasDockerfile(buildDir) {
+			// Use traditional Dockerfile build
+			fmt.Fprintln(os.Stderr, "-----> Building with Dockerfile...")
+			imageTag, err = builder.BuildImage(context.Background(), appName, buildDir, repoPath, branchToDeploy, appState.EnvVars)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n!! Dockerfile build failed: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Try to auto-detect buildpack
+			fmt.Fprintln(os.Stderr, "-----> No Dockerfile found, attempting buildpack detection...")
+			buildpackConfig, err := builder.DetectBuildpack(buildDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n!! No suitable build method found: %v\n", err)
+				fmt.Fprintf(os.Stderr, "       Please either:\n")
+				fmt.Fprintf(os.Stderr, "       - Add a Dockerfile to your repository, or\n")
+				fmt.Fprintf(os.Stderr, "       - Configure a buildpack with: mitte apps set-buildpack %s <buildpack-id>\n", appName)
+				os.Exit(1)
+			}
+
+			fmt.Fprintf(os.Stderr, "-----> Auto-detected buildpack: %s\n", buildpackConfig.BuildpackID)
+			imageTag, err = builder.BuildWithBuildpack(context.Background(), appName, buildDir, repoPath, branchToDeploy, buildpackConfig, appState.EnvVars)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n!! Buildpack build failed: %v\n", err)
+				os.Exit(1)
+			}
 		}
+
 		fmt.Fprintln(os.Stderr, "-----> imageTag:", imageTag)
 	}
 
@@ -247,6 +293,24 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	fmt.Fprintln(os.Stderr, "-----> ✨ Deployment complete! ✨")
 	fmt.Fprintf(os.Stderr, "-----> App '%s' is live and running in container %s\n", appName, deployResult.ContainerID[:12])
 	// You should be able to access it at http://<appName>.<your_base_domain>
+}
+
+// hasDockerfile checks if a Dockerfile exists in the given directory
+func hasDockerfile(dir string) bool {
+	dockerfilePath := filepath.Join(dir, "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); err == nil {
+		return true
+	}
+
+	// Also check for Dockerfile with different cases/extensions
+	alternatives := []string{"dockerfile", "Dockerfile.dockerfile", "Containerfile"}
+	for _, alt := range alternatives {
+		if _, err := os.Stat(filepath.Join(dir, alt)); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 func init() {

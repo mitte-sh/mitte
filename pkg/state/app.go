@@ -18,6 +18,8 @@ type App struct {
 	Volumes       []string          `json:"volumes,omitempty"`        // Volume mounts (host:container)
 	Ports         []string          `json:"ports,omitempty"`          // Port mappings (host:container)
 	ContainerName string            `json:"container_name,omitempty"` // Custom container name
+	Buildpack     string            `json:"buildpack,omitempty"`      // Buildpack to use (CNB)
+	BuildpackEnv  map[string]string `json:"buildpack_env,omitempty"`  // Buildpack-specific env vars
 }
 
 func Load(appName string) (*App, error) {
@@ -32,6 +34,8 @@ func Load(appName string) (*App, error) {
 			Volumes:       []string{},
 			Ports:         []string{},
 			ContainerName: "",
+			Buildpack:     "",
+			BuildpackEnv:  make(map[string]string),
 		}, nil
 	}
 
