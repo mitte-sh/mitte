@@ -80,6 +80,8 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 
 	// --- 1.6. Parse port bindings ---
 	portBindings := make(nat.PortMap)
+
+	// First, handle explicitly configured ports
 	for _, port := range ports {
 		if port != "" {
 			// Support format: "host:container" (e.g., "9200:9200")
@@ -96,6 +98,25 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 					{
 						HostIP:   "0.0.0.0",
 						HostPort: hostPort,
+					},
+				}
+			}
+		}
+	}
+
+	// If no custom ports are configured, automatically bind exposed ports
+	if len(portBindings) == 0 {
+		exposedPorts, err := getExposedPorts(ctx, cli, imageTag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Could not inspect image ports: %v\n", err)
+		} else if len(exposedPorts) > 0 {
+			fmt.Fprintf(os.Stderr, "-----> Auto-binding exposed ports: %v\n", exposedPorts)
+			for _, port := range exposedPorts {
+				// Bind to a random host port (empty HostPort means random)
+				portBindings[port] = []nat.PortBinding{
+					{
+						HostIP:   "0.0.0.0",
+						HostPort: "", // Random port
 					},
 				}
 			}
@@ -186,6 +207,25 @@ func GetContainerHostPort(ctx context.Context, cli *client.Client, containerIDOr
 	// 3. If we finish the loop and find nothing, the container has no exposed ports.
 	return "", fmt.Errorf("container '%s' is running, but no exposed ports were found to be mapped to the host", containerIDOrName)
 
+}
+
+// getExposedPorts inspects a Docker image and returns its exposed ports
+func getExposedPorts(ctx context.Context, cli *client.Client, imageName string) ([]nat.Port, error) {
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, imageName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect image %s: %w", imageName, err)
+	}
+
+	var exposedPorts []nat.Port
+	for portStr := range inspect.Config.ExposedPorts {
+		port, err := nat.NewPort("tcp", strings.TrimSuffix(portStr, "/tcp"))
+		if err != nil {
+			continue // Skip invalid ports
+		}
+		exposedPorts = append(exposedPorts, port)
+	}
+
+	return exposedPorts, nil
 }
 
 // GetLatestImageForApp finds the most recently built Docker image for a given app.
