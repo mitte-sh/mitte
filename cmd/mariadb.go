@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -102,6 +103,8 @@ var mariadbCreateCmd = &cobra.Command{
 
 		version, _ := cmd.Flags().GetString("version")
 		initialDatabase, _ := cmd.Flags().GetString("database")
+		user, _ := cmd.Flags().GetString("user")
+		userPassword, _ := cmd.Flags().GetString("password")
 
 		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
 
@@ -112,11 +115,21 @@ var mariadbCreateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Generate a secure password
-		password, err := generatePassword(32)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
-			os.Exit(1)
+		// Set database password
+		var dbPassword string
+		if userPassword != "" {
+			dbPassword = userPassword
+		} else {
+			var err error
+			dbPassword, err = generatePassword(32)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		if user == "" {
+			user = "root"
 		}
 
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -143,27 +156,33 @@ var mariadbCreateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// 2. Create Volume
-		fmt.Fprintf(os.Stderr, "-----> Creating data volume...\n")
-		volumeName := "mitte-mariadb-data-" + instanceName
-		_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
-			Name: volumeName,
-			Labels: map[string]string{
-				"app.mitte.managed-by": "mitte",
-				"app.mitte.service":    instanceName,
-				"app.mitte.type":       "mariadb",
-			},
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create data volume: %v\n", err)
-			os.Exit(1)
+		// 2. Create Volume (optional - only if we want persistent data)
+		var volumeName string
+		if initialDatabase != "" {
+			fmt.Fprintf(os.Stderr, "-----> Creating data volume...\n")
+			volumeName = "mitte-mariadb-data-" + instanceName
+			_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
+				Name: volumeName,
+				Labels: map[string]string{
+					"app.mitte.managed-by": "mitte",
+					"app.mitte.service":    instanceName,
+					"app.mitte.type":       "mariadb",
+				},
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create data volume: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// 3. Create Container
 		fmt.Fprintf(os.Stderr, "-----> Creating container...\n")
 		envVars := []string{
-			"MARIADB_ROOT_PASSWORD=" + password,
+			"MARIADB_ROOT_PASSWORD=" + dbPassword,
 			"MARIADB_ROOT_HOST=%",
+		}
+		if user != "root" {
+			envVars = append(envVars, "MARIADB_USER="+user, "MARIADB_PASSWORD="+dbPassword)
 		}
 		if initialDatabase != "" {
 			envVars = append(envVars, "MARIADB_DATABASE="+initialDatabase)
@@ -173,16 +192,20 @@ var mariadbCreateCmd = &cobra.Command{
 			Env:   envVars,
 		}
 		hostConfig := &container.HostConfig{
-			Mounts: []mount.Mount{
+			RestartPolicy: container.RestartPolicy{
+				Name: "always",
+			},
+		}
+
+		// Only mount volume if we created one
+		if volumeName != "" {
+			hostConfig.Mounts = []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
 					Source: volumeName,
 					Target: "/var/lib/mysql",
 				},
-			},
-			RestartPolicy: container.RestartPolicy{
-				Name: "always",
-			},
+			}
 		}
 
 		networkingConfig := &network.NetworkingConfig{
@@ -207,13 +230,27 @@ var mariadbCreateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// 5. Wait for MariaDB to be ready (up to 30 seconds)
+		fmt.Fprintf(os.Stderr, "-----> Waiting for MariaDB to start...\n")
+		for i := 0; i < 30; i++ {
+			inspect, err := cli.ContainerInspect(ctx, resp.ID)
+			if err != nil {
+				break
+			}
+			if inspect.State.Running && inspect.State.Health != nil && inspect.State.Health.Status == "healthy" {
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+
 		// Save the state
-		svc.RootPassword = password
+		svc.RootPassword = dbPassword
+		svc.UserPassword = dbPassword
 		svc.DatabaseName = initialDatabase
 		svc.InternalHost = instanceName
 		svc.Version = version
 		svc.Port = 3306
-		svc.Username = "root"
+		svc.Username = user
 		if err := svc.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
 			os.Exit(1)
@@ -223,7 +260,11 @@ var mariadbCreateCmd = &cobra.Command{
 		if initialDatabase != "" {
 			fmt.Printf("Initial database '%s' has also been created.\n", initialDatabase)
 		}
-		fmt.Printf("The root password is: %s\n", password)
+		if user != "root" {
+			fmt.Printf("The user '%s' password is: %s\n", user, dbPassword)
+		} else {
+			fmt.Printf("The root password is: %s\n", dbPassword)
+		}
 		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
 	},
 }
@@ -309,9 +350,13 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 		}
 
 		// Format: mysql://user:password@host:port/database
+		passwordToUse := service.UserPassword
+		if passwordToUse == "" {
+			passwordToUse = service.RootPassword
+		}
 		databaseURL := fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
 			service.Username,
-			service.RootPassword,
+			passwordToUse,
 			service.InternalHost,
 			service.Port,
 			dbToUse,
@@ -339,6 +384,8 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 func init() {
 	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
 	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
+	mariadbCreateCmd.Flags().String("user", "", "The username for the database user (optional, defaults to root)")
+	mariadbCreateCmd.Flags().String("password", "", "The password for the database user (optional, will be generated if not provided)")
 	mariadbCmd.AddCommand(mariadbListCmd)
 	mariadbCmd.AddCommand(mariadbCreateCmd)
 	mariadbCmd.AddCommand(mariadbDestroyCmd)

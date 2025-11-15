@@ -13,6 +13,7 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 *   🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
 *   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
 *   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
+*   🗄️ **MariaDB Support**: Built-in MariaDB database service for your applications.
 
 ### How It Works
 
@@ -187,6 +188,31 @@ mitte logs <appname> -f
 
 # Follow the last 100 lines
 mitte logs <appname> -f -n 100
+```
+
+#### Database Management (MariaDB)
+Manage MariaDB database instances for your applications.
+
+```bash
+# List all MariaDB instances
+mitte mariadb list
+
+# Create a new MariaDB instance
+mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password]
+
+# Example: Create a MariaDB instance with version 10.11 and initial database 'myapp'
+mitte mariadb create mydb --version=10.11 --database=myapp
+
+# Example: Create a MariaDB instance with a custom user
+mitte mariadb create mydb --user=myuser --database=myapp
+
+# Link a MariaDB instance to an app (sets DATABASE_URL)
+mitte mariadb link <instance-name> <app-name> [env-var-name]
+
+# This sets a DATABASE_URL environment variable in the format: mysql://user:password@instance:3306/database
+
+# Permanently destroy a MariaDB instance and its data
+mitte mariadb destroy <instance-name>
 ```
 
 #### Access Management (SSH Keys)
