@@ -32,6 +32,8 @@ Mitte listens for `git push` commands over SSH. When it receives a push for an a
 4.  **Runs** the image as a new container with custom volumes, ports, and environment variables.
 5.  **Routes** traffic to the new container.
 
+**⚠️ Important Note**: When using pre-built images, environment variables are applied at runtime, not during the image build process. This means environment variables will be available to your running container, but cannot be used during the image build phase. If your application requires environment variables during the build process (e.g., `DATABASE_URL` for database migrations), use the source code deployment method with a Dockerfile instead.
+
 It's a simple, robust system that takes your code or pre-built images from commit to a running, publicly accessible application in seconds.
 
 ### 🏁 Getting Started
@@ -76,6 +78,11 @@ git push mitte main
 ### 🐳 Deploying Pre-built Images
 
 Mitte also supports deploying pre-built Docker images directly, perfect for applications that are already containerized or for faster deployments.
+
+**⚠️ Environment Variable Limitation**: When using pre-built images, environment variables are applied at runtime, not during image build. This means:
+- ✅ Environment variables will be available to your running container
+- ❌ Environment variables cannot be used during the image build process
+- 🔄 If you need environment variables during build (e.g., for database migrations), use the source code deployment method with a Dockerfile instead
 
 **1. Create and Configure Your App**
 

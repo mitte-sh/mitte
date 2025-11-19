@@ -113,6 +113,11 @@ var appsDeployImageCmd = &cobra.Command{
 This will pull the image if it's not available locally, create and start a container with
 the configured volumes, ports, and container name, then update the routing configuration.
 
+⚠️  IMPORTANT: Environment variables are applied at runtime, not during image build.
+For pre-built images, env vars will be available to the running container but not during
+the image build process. If your app needs environment variables during build, use the
+git push method with a Dockerfile instead.
+
 Before running this command, you must:
 1. Create the app: mitte apps create <app-name>
 2. Set the image: mitte apps set-image <app-name> <image>
@@ -685,6 +690,15 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: No image configured for app '%s'. Set an image first with 'mitte apps set-image %s <image>'\n", appName, appName)
 		os.Exit(1)
 	}
+
+	// 3. Warn about environment variables for pre-built images
+	if len(app.EnvVars) > 0 {
+		fmt.Fprintf(os.Stderr, "-----> ⚠️  Warning: Environment variables will be applied at runtime, not during image build.\n")
+		fmt.Fprintf(os.Stderr, "       If your app needs env vars during build, use git push with a Dockerfile instead.\n")
+	}
+
+	// 4. Pull the image if it's not available locally
+	fmt.Fprintf(os.Stderr, "-----> Ensuring image '%s' is available...\n", app.Image)
 
 	// 3. Pull the image if it's not available locally
 	fmt.Fprintf(os.Stderr, "-----> Ensuring image '%s' is available...\n", app.Image)
