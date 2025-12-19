@@ -233,6 +233,17 @@ mitte mariadb restore <instance-name> <backup-file>
 # Example: Restore from backup
 mitte mariadb restore mydb /backups/mydb-backup.sql
 
+# Manage database users
+mitte mariadb users create <instance-name> <username> [--password=...] [--database=...] [--privileges=...]
+mitte mariadb users delete <instance-name> <username>
+mitte mariadb users list <instance-name>
+
+# Example: Create a read-only user
+mitte mariadb users create mydb readonly --database=mydata --privileges=SELECT
+
+# Example: Create a user with full privileges
+mitte mariadb users create mydb appuser --database="*" --privileges="ALL PRIVILEGES"
+
 # Permanently destroy a MariaDB instance and its data
 mitte mariadb destroy <instance-name>
 ```

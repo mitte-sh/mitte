@@ -52,44 +52,37 @@ var mariadbListCmd = &cobra.Command{
 		}
 
 		if len(files) == 0 {
-			fmt.Println("No MariaDB services found.")
+			fmt.Println("No MariaDB services have been created yet.")
 			return
 		}
 
-		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
-			os.Exit(1)
-		}
-		defer cli.Close()
-
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		defer w.Flush()
-		fmt.Fprintln(w, "INSTANCE NAME\tSTATUS\tINTERNAL HOST\tVERSION")
-
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tVERSION\tDATABASE\tUSER\tCONFIG FILE")
 		for _, file := range files {
-			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			if file.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(file.Name(), ".json") {
 				continue
 			}
 			instanceName := strings.TrimSuffix(file.Name(), ".json")
-
-			var status, version string
-
-			inspect, err := cli.ContainerInspect(context.Background(), instanceName)
+			svc, err := state.LoadService(serviceType, instanceName)
 			if err != nil {
-				if errdefs.IsNotFound(err) {
-					status = "stopped"
-					version = "(unknown)"
-				} else {
-					status = "error"
-				}
-			} else {
-				status = inspect.State.Status
-				version = filepath.Base(inspect.Config.Image)
+				continue
 			}
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", instanceName, status, instanceName, version)
+			configFile := "none"
+			if svc.ConfigFile != "" {
+				configFile = filepath.Base(svc.ConfigFile)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				instanceName,
+				svc.Version,
+				svc.DatabaseName,
+				svc.Username,
+				configFile,
+			)
 		}
+		w.Flush()
 	},
 }
 
@@ -145,39 +138,40 @@ var mariadbCreateCmd = &cobra.Command{
 		fmt.Fprintf(os.Stderr, "-----> Pulling image %s...\n", imageName)
 		out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to pull MariaDB image: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: Failed to pull image: %v\n", err)
 			os.Exit(1)
 		}
 		defer out.Close()
+		termFd, isTerm := term.GetFdInfo(os.Stderr)
+		jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, termFd, isTerm, nil)
 
-		// Show friendly progress
-		fd, isTerminal := term.GetFdInfo(os.Stderr)
-		if err := jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, fd, isTerminal, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to read image pull progress: %v\n", err)
-			os.Exit(1)
-		}
-
-		// 2. Create Volume (optional - only if we want persistent data)
+		// 2. Create Volume
 		var volumeName string
-		if initialDatabase != "" {
-			fmt.Fprintf(os.Stderr, "-----> Creating data volume...\n")
-			volumeName = "mitte-mariadb-data-" + instanceName
-			_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
-				Name: volumeName,
-				Labels: map[string]string{
-					"app.mitte.managed-by": "mitte",
-					"app.mitte.service":    instanceName,
-					"app.mitte.type":       "mariadb",
-				},
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create data volume: %v\n", err)
+		if _, err := cli.VolumeInspect(ctx, "mitte-mariadb-data-"+instanceName); err != nil {
+			if errdefs.IsNotFound(err) {
+				fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
+				_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+					Name: "mitte-mariadb-data-" + instanceName,
+					Labels: map[string]string{
+						"app.mitte.type":       "mariadb",
+						"app.mitte.instance":   instanceName,
+						"app.mitte.created-by": "mitte",
+					},
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+					os.Exit(1)
+				}
+				volumeName = "mitte-mariadb-data-" + instanceName
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
 				os.Exit(1)
 			}
+		} else {
+			volumeName = "mitte-mariadb-data-" + instanceName
 		}
 
 		// 3. Create Container
-		fmt.Fprintf(os.Stderr, "-----> Creating container...\n")
 		envVars := []string{
 			"MARIADB_ROOT_PASSWORD=" + dbPassword,
 			"MARIADB_ROOT_HOST=%",
@@ -243,9 +237,9 @@ var mariadbCreateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// 5. Wait for MariaDB to be ready (up to 30 seconds)
-		fmt.Fprintf(os.Stderr, "-----> Waiting for MariaDB to start...\n")
-		for i := 0; i < 30; i++ {
+		// 5. Wait for health check
+		fmt.Fprintln(os.Stderr, "-----> Waiting for MariaDB to become healthy...")
+		for i := 0; i < 60; i++ {
 			inspect, err := cli.ContainerInspect(ctx, resp.ID)
 			if err != nil {
 				break
@@ -299,26 +293,26 @@ var mariadbDestroyCmd = &cobra.Command{
 		reader := bufio.NewReader(os.Stdin)
 		confirmation, _ := reader.ReadString('\n')
 		if strings.TrimSpace(confirmation) != instanceName {
-			fmt.Println(" !    Confirmation failed. Aborting.")
+			fmt.Println("Cancelled.")
 			os.Exit(1)
 		}
 
 		fmt.Fprintf(os.Stderr, "-----> Destroying MariaDB instance '%s'...\n", instanceName)
 
-		// 1. Destroy Docker resources (container and volume)
-		if err := services.DestroyMariaDB(ctx, instanceName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to destroy MariaDB resources: %v\n", err)
+		// Delete the service state first
+		svc, err := state.LoadService("mariadb", instanceName)
+		if err == nil {
+			svc.Delete()
+		}
+
+		// Destroy the container and volume
+		err = services.DestroyMariaDB(ctx, instanceName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to destroy MariaDB instance: %v\n", err)
 			os.Exit(1)
 		}
 
-		// 2. Delete the state file
-		svc, _ := state.LoadService("mariadb", instanceName)
-		if err := svc.Delete(); err != nil {
-			// This is not a fatal error, but we should warn the user.
-			fmt.Fprintf(os.Stderr, "Warning: Failed to delete service state file: %v\n", err)
-		}
-
-		fmt.Printf("Success! MariaDB instance '%s' destroyed.\n", instanceName)
+		fmt.Printf("Success! MariaDB instance '%s' has been destroyed.\n", instanceName)
 	},
 }
 
@@ -439,6 +433,109 @@ WARNING: This will overwrite existing data in the databases.`,
 	},
 }
 
+var mariadbUsersCmd = &cobra.Command{
+	Use:   "users",
+	Short: "Manage database users for MariaDB instances",
+}
+
+var mariadbUsersCreateCmd = &cobra.Command{
+	Use:   "create <instance-name> <username>",
+	Short: "Create a new database user in a MariaDB instance",
+	Long: `This command creates a new database user with the specified privileges.
+If no password is provided, a secure password will be generated automatically.
+If no database is specified, the user will have no database access by default.
+If no privileges are specified, the user will have no privileges by default.`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		username := args[1]
+
+		password, _ := cmd.Flags().GetString("password")
+		database, _ := cmd.Flags().GetString("database")
+		privileges, _ := cmd.Flags().GetStringSlice("privileges")
+
+		fmt.Fprintf(os.Stderr, "-----> Creating user '%s' in MariaDB instance '%s'...\n", username, instanceName)
+
+		// Generate password if not provided
+		if password == "" {
+			var err error
+			password, err = generatePassword(32)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Default to all databases if not specified
+		if database == "" {
+			database = "*"
+		}
+
+		err := services.CreateMariaDBUser(context.Background(), instanceName, username, password, database, privileges)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to create user: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Success! User '%s' created in MariaDB instance '%s'.\n", username, instanceName)
+		fmt.Printf("Password: %s\n", password)
+		fmt.Printf("Database: %s\n", database)
+		if len(privileges) > 0 {
+			fmt.Printf("Privileges: %s\n", strings.Join(privileges, ", "))
+		}
+		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
+	},
+}
+
+var mariadbUsersDeleteCmd = &cobra.Command{
+	Use:     "delete <instance-name> <username>",
+	Short:   "Delete a database user from a MariaDB instance",
+	Aliases: []string{"remove", "rm"},
+	Args:    cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		username := args[1]
+
+		fmt.Fprintf(os.Stderr, "-----> Deleting user '%s' from MariaDB instance '%s'...\n", username, instanceName)
+
+		err := services.DeleteMariaDBUser(context.Background(), instanceName, username)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to delete user: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Success! User '%s' deleted from MariaDB instance '%s'.\n", username, instanceName)
+	},
+}
+
+var mariadbUsersListCmd = &cobra.Command{
+	Use:     "list <instance-name>",
+	Short:   "List all database users in a MariaDB instance",
+	Aliases: []string{"ls"},
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+
+		fmt.Fprintf(os.Stderr, "-----> Listing users in MariaDB instance '%s'...\n", instanceName)
+
+		users, err := services.ListMariaDBUsers(context.Background(), instanceName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to list users: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(users) == 0 {
+			fmt.Println("No database users found (excluding system users).")
+			return
+		}
+
+		fmt.Println("Database users:")
+		for _, user := range users {
+			fmt.Printf("  • %s\n", user)
+		}
+	},
+}
+
 func init() {
 	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
 	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
@@ -451,6 +548,17 @@ func init() {
 	mariadbCmd.AddCommand(mariadbLinkCmd)
 	mariadbCmd.AddCommand(mariadbBackupCmd)
 	mariadbCmd.AddCommand(mariadbRestoreCmd)
+
+	// User management commands
+	mariadbUsersCreateCmd.Flags().String("password", "", "Password for the new user (will be generated if not provided)")
+	mariadbUsersCreateCmd.Flags().String("database", "", "Database to grant access to (default: all databases)")
+	mariadbUsersCreateCmd.Flags().StringSlice("privileges", []string{"ALL PRIVILEGES"}, "Privileges to grant (e.g., SELECT,INSERT,UPDATE,DELETE,CREATE,DROP)")
+
+	mariadbUsersCmd.AddCommand(mariadbUsersCreateCmd)
+	mariadbUsersCmd.AddCommand(mariadbUsersDeleteCmd)
+	mariadbUsersCmd.AddCommand(mariadbUsersListCmd)
+	mariadbCmd.AddCommand(mariadbUsersCmd)
+
 	rootCmd.AddCommand(mariadbCmd)
 }
 

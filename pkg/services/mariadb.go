@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -160,4 +161,100 @@ func RestoreMariaDB(ctx context.Context, instanceName, backupPath string) error 
 	}
 
 	return nil
+}
+
+// CreateMariaDBUser creates a new database user in a MariaDB instance
+func CreateMariaDBUser(ctx context.Context, instanceName, username, password, database string, privileges []string) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	// Build SQL commands
+	var sqlCommands []string
+
+	// Create user
+	sqlCommands = append(sqlCommands, fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';", username, password))
+
+	// Grant privileges
+	if len(privileges) > 0 {
+		privs := strings.Join(privileges, ", ")
+		if database == "*" {
+			sqlCommands = append(sqlCommands, fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%%';", privs, username))
+		} else {
+			sqlCommands = append(sqlCommands, fmt.Sprintf("GRANT %s ON `%s`.* TO '%s'@'%%';", privs, database, username))
+		}
+	}
+
+	// Flush privileges
+	sqlCommands = append(sqlCommands, "FLUSH PRIVILEGES;")
+
+	// Execute SQL commands
+	for _, sql := range sqlCommands {
+		cmd := exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-e", sql)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to execute SQL '%s': %w\nOutput: %s", sql, err, output)
+		}
+	}
+
+	return nil
+}
+
+// DeleteMariaDBUser deletes a database user from a MariaDB instance
+func DeleteMariaDBUser(ctx context.Context, instanceName, username string) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	// Build SQL command to drop user
+	sql := fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%';", username)
+
+	// Execute SQL command
+	cmd := exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-e", sql)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w\nOutput: %s", err, output)
+	}
+
+	return nil
+}
+
+// ListMariaDBUsers lists all database users in a MariaDB instance
+func ListMariaDBUsers(ctx context.Context, instanceName string) ([]string, error) {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return nil, fmt.Errorf("root password not found in service state")
+	}
+
+	// SQL to list users (excluding system users)
+	sql := "SELECT CONCAT('''', user, '''@''', host, '''') as user FROM mysql.user WHERE user NOT IN ('root', 'mariadb.sys', 'mysql');"
+
+	// Execute SQL command
+	cmd := exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-N", "-e", sql)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+
+	// Parse output
+	users := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(users) == 1 && users[0] == "" {
+		return []string{}, nil
+	}
+
+	return users, nil
 }
