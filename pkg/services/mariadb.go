@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -34,6 +35,13 @@ func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version stri
 		Env: []string{
 			fmt.Sprintf("MARIADB_ROOT_PASSWORD=%s", rootPassword),
 			// TODO: Add more config vars here, like MARIADB_DATABASE
+		},
+		Healthcheck: &container.HealthConfig{
+			Test:        []string{"mysqladmin", "ping", "-h", "localhost"},
+			Interval:    10 * time.Second,
+			Timeout:     5 * time.Second,
+			Retries:     3,
+			StartPeriod: 30 * time.Second,
 		},
 	}
 
