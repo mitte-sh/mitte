@@ -1,16 +1,20 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+
+	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
 func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version string) error {
@@ -87,6 +91,61 @@ func DestroyMariaDB(ctx context.Context, instanceName string) error {
 		if !client.IsErrNotFound(err) {
 			return fmt.Errorf("failed to remove volume '%s': %w", volumeName, err)
 		}
+	}
+
+	return nil
+}
+
+// BackupMariaDB creates a backup of all databases in the MariaDB container
+func BackupMariaDB(ctx context.Context, instanceName, outputPath string) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	// Run mysqldump inside the container
+	cmd := exec.Command("docker", "exec", instanceName, "mysqldump", "-u", "root", "-p"+svc.RootPassword, "--all-databases")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to run mysqldump: %w", err)
+	}
+
+	// Write output to file
+	err = os.WriteFile(outputPath, output, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write backup file: %w", err)
+	}
+
+	return nil
+}
+
+// RestoreMariaDB restores databases from a backup file into the MariaDB container
+func RestoreMariaDB(ctx context.Context, instanceName, backupPath string) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	// Read backup file
+	backupData, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("failed to read backup file: %w", err)
+	}
+
+	// Run mysql restore inside the container
+	cmd := exec.Command("docker", "exec", "-i", instanceName, "mysql", "-u", "root", "-p"+svc.RootPassword)
+	cmd.Stdin = bytes.NewReader(backupData)
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run mysql restore: %w", err)
 	}
 
 	return nil

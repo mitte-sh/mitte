@@ -381,6 +381,50 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 	},
 }
 
+var mariadbBackupCmd = &cobra.Command{
+	Use:   "backup <instance-name> <output-file>",
+	Short: "Create a backup of all databases in a MariaDB instance",
+	Long: `This command creates a SQL dump of all databases in the specified MariaDB instance
+and saves it to the specified output file on the host system.`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		outputFile := args[1]
+
+		fmt.Fprintf(os.Stderr, "-----> Creating backup of MariaDB instance '%s'...\n", instanceName)
+
+		err := services.BackupMariaDB(context.Background(), instanceName, outputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to create backup: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Success! Backup saved to %s\n", outputFile)
+	},
+}
+
+var mariadbRestoreCmd = &cobra.Command{
+	Use:   "restore <instance-name> <backup-file>",
+	Short: "Restore databases from a backup file into a MariaDB instance",
+	Long: `This command restores databases from a SQL dump file into the specified MariaDB instance.
+WARNING: This will overwrite existing data in the databases.`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		backupFile := args[1]
+
+		fmt.Fprintf(os.Stderr, "-----> Restoring MariaDB instance '%s' from backup...\n", instanceName)
+
+		err := services.RestoreMariaDB(context.Background(), instanceName, backupFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to restore from backup: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("Success! Database restored from backup.")
+	},
+}
+
 func init() {
 	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
 	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
@@ -390,6 +434,8 @@ func init() {
 	mariadbCmd.AddCommand(mariadbCreateCmd)
 	mariadbCmd.AddCommand(mariadbDestroyCmd)
 	mariadbCmd.AddCommand(mariadbLinkCmd)
+	mariadbCmd.AddCommand(mariadbBackupCmd)
+	mariadbCmd.AddCommand(mariadbRestoreCmd)
 	rootCmd.AddCommand(mariadbCmd)
 }
 
