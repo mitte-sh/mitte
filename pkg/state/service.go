@@ -10,16 +10,19 @@ import (
 const servicesDir = "/var/lib/mitte/services"
 
 type Service struct {
-	InstanceName string `json:"instance_name"`
-	Type         string `json:"type"`
-	Version      string `json:"version"`
-	RootPassword string `json:"root_password"`
-	UserPassword string `json:"user_password"`
-	DatabaseName string `json:"database_name"`
-	InternalHost string `json:"internal_host"`
-	Port         int    `json:"port"`
-	Username     string `json:"username"`
-	ConfigFile   string `json:"config_file"`
+	InstanceName    string `json:"instance_name"`
+	Type            string `json:"type"`
+	Version         string `json:"version"`
+	PreviousVersion string `json:"previous_version,omitempty"`
+	RootPassword    string `json:"root_password"`
+	UserPassword    string `json:"user_password"`
+	DatabaseName    string `json:"database_name"`
+	InternalHost    string `json:"internal_host"`
+	Port            int    `json:"port"`
+	Username        string `json:"username"`
+	ConfigFile      string `json:"config_file"`
+	LastBackupPath  string `json:"last_backup_path,omitempty"`
+	UpgradedAt      string `json:"upgraded_at,omitempty"`
 }
 
 // LoadService reads the state file for a specific service instance.

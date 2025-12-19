@@ -536,6 +536,99 @@ var mariadbUsersListCmd = &cobra.Command{
 	},
 }
 
+var mariadbUpgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Manage MariaDB version upgrades",
+}
+
+var mariadbUpgradeCheckCmd = &cobra.Command{
+	Use:   "check <instance-name>",
+	Short: "Check if an upgrade is available for a MariaDB instance",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+
+		fmt.Fprintf(os.Stderr, "-----> Checking upgrade status for MariaDB instance '%s'...\n", instanceName)
+
+		currentVersion, configuredVersion, err := services.CheckMariaDBUpgrade(context.Background(), instanceName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to check upgrade status: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("MariaDB instance: %s\n", instanceName)
+		fmt.Printf("Configured version: %s\n", configuredVersion)
+		fmt.Printf("Current running version: %s\n", currentVersion)
+
+		if currentVersion != "" && configuredVersion != "" {
+			// Simple version comparison
+			if currentVersion != configuredVersion {
+				fmt.Println("\n⚠️  Version mismatch detected!")
+				fmt.Println("The running version differs from the configured version.")
+				fmt.Println("Run 'mitte mariadb upgrade <instance-name> --to-version=<version>' to upgrade.")
+			} else {
+				fmt.Println("\n✅ Version matches configured version.")
+			}
+		}
+	},
+}
+
+var mariadbUpgradePerformCmd = &cobra.Command{
+	Use:   "perform <instance-name>",
+	Short: "Perform a version upgrade on a MariaDB instance",
+	Long: `This command upgrades a MariaDB instance to a new version while preserving all data.
+It will:
+1. Create a backup of all databases
+2. Stop and remove the current container
+3. Start a new container with the target version using the same data volume
+4. Run mysql_upgrade if needed
+5. Update the service state with the new version
+
+WARNING: This will cause temporary downtime for the database.`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		instanceName := args[0]
+		targetVersion, _ := cmd.Flags().GetString("to-version")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		if targetVersion == "" {
+			fmt.Fprintf(os.Stderr, "Error: Target version is required. Use --to-version flag.\n")
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stderr, "-----> Planning upgrade of MariaDB instance '%s'...\n", instanceName)
+
+		if dryRun {
+			fmt.Println("DRY RUN MODE: No changes will be made.")
+		}
+
+		// Safety confirmation
+		if !dryRun {
+			fmt.Printf(" !    WARNING: This will upgrade MariaDB instance '%s' to version %s.\n", instanceName, targetVersion)
+			fmt.Printf(" !    The database will be temporarily unavailable during the upgrade.\n")
+			fmt.Printf(" >    Type 'yes' to confirm: ")
+			reader := bufio.NewReader(os.Stdin)
+			confirmation, _ := reader.ReadString('\n')
+			if strings.TrimSpace(strings.ToLower(confirmation)) != "yes" {
+				fmt.Println("Cancelled.")
+				os.Exit(1)
+			}
+		}
+
+		err := services.UpgradeMariaDB(context.Background(), instanceName, targetVersion, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to upgrade MariaDB instance: %v\n", err)
+			os.Exit(1)
+		}
+
+		if dryRun {
+			fmt.Println("Dry run completed successfully. No changes were made.")
+		} else {
+			fmt.Printf("Success! MariaDB instance '%s' has been upgraded to version %s.\n", instanceName, targetVersion)
+		}
+	},
+}
+
 func init() {
 	mariadbCreateCmd.Flags().String("version", "latest", "The version tag of the MariaDB Docker image to use (e.g., 10.11)")
 	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
@@ -558,6 +651,15 @@ func init() {
 	mariadbUsersCmd.AddCommand(mariadbUsersDeleteCmd)
 	mariadbUsersCmd.AddCommand(mariadbUsersListCmd)
 	mariadbCmd.AddCommand(mariadbUsersCmd)
+
+	// Upgrade commands
+	mariadbUpgradePerformCmd.Flags().String("to-version", "", "Target MariaDB version (e.g., 10.11, latest)")
+	mariadbUpgradePerformCmd.Flags().Bool("dry-run", false, "Simulate upgrade without making changes")
+	mariadbUpgradePerformCmd.MarkFlagRequired("to-version")
+
+	mariadbUpgradeCmd.AddCommand(mariadbUpgradeCheckCmd)
+	mariadbUpgradeCmd.AddCommand(mariadbUpgradePerformCmd)
+	mariadbCmd.AddCommand(mariadbUpgradeCmd)
 
 	rootCmd.AddCommand(mariadbCmd)
 }

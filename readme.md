@@ -244,6 +244,19 @@ mitte mariadb users create mydb readonly --database=mydata --privileges=SELECT
 # Example: Create a user with full privileges
 mitte mariadb users create mydb appuser --database="*" --privileges="ALL PRIVILEGES"
 
+# Database version upgrades
+mitte mariadb upgrade check <instance-name>
+mitte mariadb upgrade perform <instance-name> --to-version=<version> [--dry-run]
+
+# Example: Check upgrade status
+mitte mariadb upgrade check mydb
+
+# Example: Perform upgrade to version 10.11
+mitte mariadb upgrade perform mydb --to-version=10.11
+
+# Example: Dry run upgrade to latest version
+mitte mariadb upgrade perform mydb --to-version=latest --dry-run
+
 # Permanently destroy a MariaDB instance and its data
 mitte mariadb destroy <instance-name>
 ```
@@ -264,6 +277,13 @@ mitte mariadb destroy <instance-name>
 - Mount custom `.cnf` files into `/etc/mysql/conf.d/custom.cnf`
 - Support for performance tuning, security settings, and production requirements
 - Read-only mounting for security
+
+**Version Upgrades**: Safe database migration with:
+- Automatic backup creation before upgrade
+- In-place version upgrades with data preservation
+- Dry-run mode for testing upgrades
+- Automatic `mysql_upgrade` execution when needed
+- Rollback tracking with previous version history
 
 **Example Configuration File** (`my-performance.cnf`):
 ```ini

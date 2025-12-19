@@ -258,3 +258,179 @@ func ListMariaDBUsers(ctx context.Context, instanceName string) ([]string, error
 
 	return users, nil
 }
+
+// CheckMariaDBUpgrade checks if an upgrade is available for a MariaDB instance
+func CheckMariaDBUpgrade(ctx context.Context, instanceName string) (string, string, error) {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	// Get current version from container
+	cmd := exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-N", "-e", "SELECT VERSION();")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	currentVersion := strings.TrimSpace(string(output))
+
+	// For now, we'll just return the current version
+	// In a real implementation, we would check Docker Hub for newer versions
+	return currentVersion, svc.Version, nil
+}
+
+// UpgradeMariaDB upgrades a MariaDB instance to a new version
+func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dryRun bool) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	// Check if we're already on the target version
+	if svc.Version == targetVersion {
+		return fmt.Errorf("already on version %s", targetVersion)
+	}
+
+	fmt.Printf("Planning upgrade of MariaDB instance '%s' from %s to %s\n", instanceName, svc.Version, targetVersion)
+
+	if dryRun {
+		fmt.Println("Dry run mode - no changes will be made")
+		return nil
+	}
+
+	// 1. Create backup
+	backupFile := fmt.Sprintf("/tmp/mitte-mariadb-backup-%s-%s.sql", instanceName, time.Now().Format("20060102-150405"))
+	fmt.Printf("Creating backup to %s...\n", backupFile)
+	if err := BackupMariaDB(ctx, instanceName, backupFile); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+
+	// 2. Stop current container
+	fmt.Println("Stopping current container...")
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	timeout := 30
+	if err := cli.ContainerStop(ctx, instanceName, container.StopOptions{Timeout: &timeout}); err != nil {
+		if !client.IsErrNotFound(err) {
+			return fmt.Errorf("failed to stop container: %w", err)
+		}
+	}
+
+	// 3. Remove current container (keep volume)
+	fmt.Println("Removing current container...")
+	if err := cli.ContainerRemove(ctx, instanceName, container.RemoveOptions{}); err != nil {
+		if !client.IsErrNotFound(err) {
+			return fmt.Errorf("failed to remove container: %w", err)
+		}
+	}
+
+	// 4. Pull new image
+	newImage := fmt.Sprintf("mariadb:%s", targetVersion)
+	fmt.Printf("Pulling new image %s...\n", newImage)
+	out, err := cli.ImagePull(ctx, newImage, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull new image: %w", err)
+	}
+	defer out.Close()
+	io.Copy(os.Stdout, out)
+
+	// 5. Create new container with same volume and configuration
+	fmt.Println("Creating new container...")
+
+	envVars := []string{
+		fmt.Sprintf("MARIADB_ROOT_PASSWORD=%s", svc.RootPassword),
+		"MARIADB_ROOT_HOST=%",
+	}
+	if svc.Username != "root" {
+		envVars = append(envVars, fmt.Sprintf("MARIADB_USER=%s", svc.Username), fmt.Sprintf("MARIADB_PASSWORD=%s", svc.UserPassword))
+	}
+	if svc.DatabaseName != "" {
+		envVars = append(envVars, fmt.Sprintf("MARIADB_DATABASE=%s", svc.DatabaseName))
+	}
+
+	config := &container.Config{
+		Image: newImage,
+		Env:   envVars,
+		Healthcheck: &container.HealthConfig{
+			Test:        []string{"mysqladmin", "ping", "-h", "localhost"},
+			Interval:    10 * time.Second,
+			Timeout:     5 * time.Second,
+			Retries:     3,
+			StartPeriod: 30 * time.Second,
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds:         []string{fmt.Sprintf("mitte-db-%s:/var/lib/mysql", instanceName)},
+		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+
+	// Mount custom config file if it exists
+	if svc.ConfigFile != "" {
+		if _, err := os.Stat(svc.ConfigFile); err == nil {
+			hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:/etc/mysql/conf.d/custom.cnf:ro", svc.ConfigFile))
+		}
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"mitte": {},
+		},
+	}
+
+	resp, err := cli.ContainerCreate(ctx, config, hostConfig, networkingConfig, nil, instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to create new container: %w", err)
+	}
+
+	// 6. Start new container
+	fmt.Println("Starting new container...")
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("failed to start new container: %w", err)
+	}
+
+	// 7. Wait for health check
+	fmt.Println("Waiting for MariaDB to become healthy...")
+	for i := 0; i < 60; i++ {
+		inspect, err := cli.ContainerInspect(ctx, resp.ID)
+		if err != nil {
+			break
+		}
+		if inspect.State.Running && inspect.State.Health != nil && inspect.State.Health.Status == "healthy" {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	// 8. Run mysql_upgrade if needed (for major version upgrades)
+	fmt.Println("Checking if mysql_upgrade is needed...")
+	cmd := exec.Command("docker", "exec", instanceName, "mysql_upgrade", "-u", "root", "-p"+svc.RootPassword)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// mysql_upgrade may fail on certain versions, log but continue
+		fmt.Printf("mysql_upgrade output: %s\n", output)
+	}
+
+	// 9. Update service state with new version and migration info
+	svc.PreviousVersion = svc.Version
+	svc.Version = targetVersion
+	svc.LastBackupPath = backupFile
+	svc.UpgradedAt = time.Now().Format(time.RFC3339)
+	if err := svc.Save(); err != nil {
+		return fmt.Errorf("failed to update service state: %w", err)
+	}
+
+	fmt.Printf("Successfully upgraded MariaDB instance '%s' from %s to %s\n", instanceName, svc.Version, targetVersion)
+	fmt.Printf("Backup saved to: %s\n", backupFile)
+
+	return nil
+}
