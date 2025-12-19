@@ -438,8 +438,34 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 
 // GeneratePoolingConfig generates MariaDB configuration for connection pooling
 func GeneratePoolingConfig(preset string, maxConnections, threadCacheSize, tableOpenCache int, innodbBufferPoolSize, queryCacheSize string) (string, error) {
+	return GeneratePoolingConfigWithResources(preset, maxConnections, threadCacheSize, tableOpenCache, innodbBufferPoolSize, queryCacheSize, "")
+}
+
+// GeneratePoolingConfigWithResources generates MariaDB configuration for connection pooling with resource detection
+func GeneratePoolingConfigWithResources(preset string, maxConnections, threadCacheSize, tableOpenCache int, innodbBufferPoolSize, queryCacheSize, instanceName string) (string, error) {
 	var config strings.Builder
 	config.WriteString("[mysqld]\n")
+
+	// Detect container memory if instanceName is provided and innodbBufferPoolSize is not specified
+	if instanceName != "" && innodbBufferPoolSize == "" {
+		// Try to detect container memory limits
+		memoryMB := detectContainerMemory(instanceName)
+		if memoryMB > 0 {
+			// Calculate optimal buffer pool size (70-80% of available RAM)
+			// But leave at least 256MB for OS and other processes
+			optimalBufferPoolMB := int(float64(memoryMB) * 0.75)
+			if optimalBufferPoolMB < 256 {
+				optimalBufferPoolMB = 256
+			}
+
+			// Convert to human-readable format
+			if optimalBufferPoolMB >= 1024 {
+				innodbBufferPoolSize = fmt.Sprintf("%dG", optimalBufferPoolMB/1024)
+			} else {
+				innodbBufferPoolSize = fmt.Sprintf("%dM", optimalBufferPoolMB)
+			}
+		}
+	}
 
 	// Apply preset if specified
 	if preset != "" {
@@ -537,6 +563,43 @@ func GeneratePoolingConfig(preset string, maxConnections, threadCacheSize, table
 	return config.String(), nil
 }
 
+// detectContainerMemory tries to detect the memory limit of a Docker container
+func detectContainerMemory(containerName string) int {
+	// Try to get memory limit from Docker inspect
+	cmd := exec.Command("docker", "inspect", containerName, "--format", "{{.HostConfig.Memory}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	memoryStr := strings.TrimSpace(string(output))
+	if memoryStr == "0" || memoryStr == "" {
+		// No memory limit set, try to get from cgroups
+		cmd = exec.Command("docker", "exec", containerName, "cat", "/sys/fs/cgroup/memory/memory.limit_in_bytes")
+		output, err = cmd.Output()
+		if err != nil {
+			return 0
+		}
+		memoryStr = strings.TrimSpace(string(output))
+	}
+
+	// Parse memory value
+	memoryBytes, err := strconv.ParseInt(memoryStr, 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	// Convert bytes to megabytes
+	memoryMB := int(memoryBytes / 1024 / 1024)
+
+	// If memory limit is very large (like 9223372036854771712 for unlimited), return 0
+	if memoryMB > 1000000 { // More than 1TB, probably unlimited
+		return 0
+	}
+
+	return memoryMB
+}
+
 // ConnectionStats holds MariaDB connection statistics
 type ConnectionStats struct {
 	ThreadsConnected int     `json:"threads_connected"`
@@ -616,4 +679,112 @@ func AnalyzeConnections(ctx context.Context, instanceName string) (*ConnectionSt
 	}
 
 	return stats, nil
+}
+
+// ApplyPoolingConfig applies connection pooling configuration to an existing MariaDB instance
+func ApplyPoolingConfig(ctx context.Context, instanceName, configContent string, restart bool) error {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return fmt.Errorf("root password not found in service state")
+	}
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	// Create temporary config file
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("mitte-pooling-%s-*.cnf", instanceName))
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(configContent); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Check if container exists
+	_, err = cli.ContainerInspect(ctx, instanceName)
+	if err != nil {
+		return fmt.Errorf("container not found: %w", err)
+	}
+
+	// Stop container if restart is requested
+	if restart {
+		timeout := 30
+		if err := cli.ContainerStop(ctx, instanceName, container.StopOptions{Timeout: &timeout}); err != nil {
+			return fmt.Errorf("failed to stop container: %w", err)
+		}
+	}
+
+	// Copy config file to container
+	configFile := "/etc/mysql/conf.d/pooling.cnf"
+	cmd := exec.Command("docker", "cp", tmpFile.Name(), fmt.Sprintf("%s:%s", instanceName, configFile))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to copy config to container: %w\nOutput: %s", err, output)
+	}
+
+	// Start container if it was stopped
+	if restart {
+		if err := cli.ContainerStart(ctx, instanceName, container.StartOptions{}); err != nil {
+			return fmt.Errorf("failed to start container: %w", err)
+		}
+
+		// Wait for health check
+		for i := 0; i < 60; i++ {
+			inspect, err := cli.ContainerInspect(ctx, instanceName)
+			if err != nil {
+				break
+			}
+			if inspect.State.Running && inspect.State.Health != nil && inspect.State.Health.Status == "healthy" {
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+	} else {
+		// Send SIGHUP to MariaDB to reload configuration without restart
+		cmd := exec.Command("docker", "exec", instanceName, "kill", "-HUP", "1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to reload MariaDB configuration: %w\nOutput: %s", err, output)
+		}
+	}
+
+	// Update service state with new configuration
+	// Parse config content to extract values
+	lines := strings.Split(configContent, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "max_connections = ") {
+			if val, err := strconv.Atoi(strings.TrimPrefix(line, "max_connections = ")); err == nil {
+				svc.MaxConnections = val
+			}
+		} else if strings.HasPrefix(line, "thread_cache_size = ") {
+			if val, err := strconv.Atoi(strings.TrimPrefix(line, "thread_cache_size = ")); err == nil {
+				svc.ThreadCacheSize = val
+			}
+		} else if strings.HasPrefix(line, "table_open_cache = ") {
+			if val, err := strconv.Atoi(strings.TrimPrefix(line, "table_open_cache = ")); err == nil {
+				svc.TableOpenCache = val
+			}
+		} else if strings.HasPrefix(line, "innodb_buffer_pool_size = ") {
+			svc.InnoDBBufferPoolSize = strings.TrimPrefix(line, "innodb_buffer_pool_size = ")
+		} else if strings.HasPrefix(line, "query_cache_size = ") {
+			svc.QueryCacheSize = strings.TrimPrefix(line, "query_cache_size = ")
+		}
+	}
+
+	if err := svc.Save(); err != nil {
+		return fmt.Errorf("failed to update service state: %w", err)
+	}
+
+	return nil
 }

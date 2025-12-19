@@ -729,6 +729,32 @@ func init() {
 		Short: "Manage MariaDB connection pooling",
 	}
 
+	var mariadbConnectionsStatsCmd = &cobra.Command{
+		Use:   "stats <instance-name>",
+		Short: "Show connection statistics for a MariaDB instance",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			instanceName := args[0]
+
+			fmt.Fprintf(os.Stderr, "-----> Getting connection statistics for MariaDB instance '%s'...\n", instanceName)
+
+			stats, err := services.AnalyzeConnections(context.Background(), instanceName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to get connection statistics: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("Connection Statistics:")
+			fmt.Printf("  Max Connections: %d\n", stats.MaxConnections)
+			fmt.Printf("  Threads Connected: %d\n", stats.ThreadsConnected)
+			fmt.Printf("  Threads Running: %d\n", stats.ThreadsRunning)
+			fmt.Printf("  Threads Cached: %d\n", stats.ThreadsCached)
+			fmt.Printf("  Threads Created: %d\n", stats.ThreadsCreated)
+			fmt.Printf("  Connection Usage: %.1f%%\n", stats.ConnectionUsage)
+			fmt.Printf("  Connection Churn: %.2f\n", stats.ConnectionChurn)
+		},
+	}
+
 	var mariadbConnectionsAnalyzeCmd = &cobra.Command{
 		Use:   "analyze <instance-name>",
 		Short: "Analyze connection usage in a MariaDB instance",
@@ -818,14 +844,15 @@ pooling configuration based on the workload patterns.`,
 				fmt.Printf("Based on current usage (%d connections), suggesting '%s' preset.\n", stats.ThreadsConnected, preset)
 			}
 
-			// Generate configuration using existing values or preset defaults
-			config, err := services.GeneratePoolingConfig(
+			// Generate configuration using existing values or preset defaults with resource detection
+			config, err := services.GeneratePoolingConfigWithResources(
 				preset,
 				svc.MaxConnections,
 				svc.ThreadCacheSize,
 				svc.TableOpenCache,
 				svc.InnoDBBufferPoolSize,
 				svc.QueryCacheSize,
+				instanceName,
 			)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
@@ -841,10 +868,88 @@ pooling configuration based on the workload patterns.`,
 		},
 	}
 
+	var mariadbConnectionsApplyCmd = &cobra.Command{
+		Use:   "apply <instance-name>",
+		Short: "Apply connection pooling configuration to an existing MariaDB instance",
+		Long: `This command applies connection pooling configuration to an existing MariaDB instance.
+You can either provide a configuration file or use command-line flags to specify
+pooling parameters. The configuration will be applied immediately.
+
+Some parameters require a container restart to take effect. Use --restart flag
+to automatically restart the container after applying configuration.`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			instanceName := args[0]
+			configFile, _ := cmd.Flags().GetString("config-file")
+			maxConnections, _ := cmd.Flags().GetInt("max-connections")
+			threadCacheSize, _ := cmd.Flags().GetInt("thread-cache-size")
+			tableOpenCache, _ := cmd.Flags().GetInt("table-open-cache")
+			innodbBufferPoolSize, _ := cmd.Flags().GetString("innodb-buffer-pool-size")
+			queryCacheSize, _ := cmd.Flags().GetString("query-cache-size")
+			poolingPreset, _ := cmd.Flags().GetString("pooling-preset")
+			restart, _ := cmd.Flags().GetBool("restart")
+
+			fmt.Fprintf(os.Stderr, "-----> Applying connection pooling configuration to MariaDB instance '%s'...\n", instanceName)
+
+			var configContent string
+			var err error
+
+			if configFile != "" {
+				// Read configuration from file
+				content, err := os.ReadFile(configFile)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to read config file: %v\n", err)
+					os.Exit(1)
+				}
+				configContent = string(content)
+			} else {
+				// Generate configuration from flags/preset with resource detection
+				configContent, err = services.GeneratePoolingConfigWithResources(
+					poolingPreset,
+					maxConnections,
+					threadCacheSize,
+					tableOpenCache,
+					innodbBufferPoolSize,
+					queryCacheSize,
+					instanceName,
+				)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			// Apply the configuration
+			if err := services.ApplyPoolingConfig(context.Background(), instanceName, configContent, restart); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to apply pooling configuration: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("Success! Connection pooling configuration has been applied.")
+			if restart {
+				fmt.Println("Container was restarted to apply changes.")
+			} else {
+				fmt.Println("Configuration was reloaded without restart.")
+				fmt.Println("Note: Some parameters may require a restart to take full effect.")
+			}
+		},
+	}
+
+	mariadbConnectionsApplyCmd.Flags().String("config-file", "", "Path to a MariaDB configuration file (.cnf) to apply")
+	mariadbConnectionsApplyCmd.Flags().Int("max-connections", 0, "Maximum number of concurrent connections")
+	mariadbConnectionsApplyCmd.Flags().Int("thread-cache-size", 0, "Number of threads to cache for reuse")
+	mariadbConnectionsApplyCmd.Flags().Int("table-open-cache", 0, "Number of table descriptors to cache")
+	mariadbConnectionsApplyCmd.Flags().String("innodb-buffer-pool-size", "", "Size of InnoDB buffer pool (e.g., 1G, 512M)")
+	mariadbConnectionsApplyCmd.Flags().String("query-cache-size", "", "Size of query cache (e.g., 128M, 256M)")
+	mariadbConnectionsApplyCmd.Flags().String("pooling-preset", "", "Connection pooling preset (small, medium, large, high-traffic)")
+	mariadbConnectionsApplyCmd.Flags().Bool("restart", false, "Restart container after applying configuration")
+
 	mariadbConnectionsOptimizeCmd.Flags().String("preset", "", "Connection pooling preset to use (small, medium, large, high-traffic)")
 
+	mariadbConnectionsCmd.AddCommand(mariadbConnectionsStatsCmd)
 	mariadbConnectionsCmd.AddCommand(mariadbConnectionsAnalyzeCmd)
 	mariadbConnectionsCmd.AddCommand(mariadbConnectionsOptimizeCmd)
+	mariadbConnectionsCmd.AddCommand(mariadbConnectionsApplyCmd)
 	mariadbCmd.AddCommand(mariadbConnectionsCmd)
 
 	rootCmd.AddCommand(mariadbCmd)

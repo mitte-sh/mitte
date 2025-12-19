@@ -264,14 +264,28 @@ mitte mariadb upgrade perform mydb --to-version=10.11
 mitte mariadb upgrade perform mydb --to-version=latest --dry-run
 
 # Connection pooling management
+mitte mariadb connections stats <instance-name>
 mitte mariadb connections analyze <instance-name>
 mitte mariadb connections optimize <instance-name> [--preset=small|medium|large|high-traffic]
+mitte mariadb connections apply <instance-name> [--config-file=path] [--max-connections=N] [--thread-cache-size=N] [--table-open-cache=N] [--innodb-buffer-pool-size=SIZE] [--query-cache-size=SIZE] [--pooling-preset=PRESET] [--restart]
+
+# Example: Show connection statistics
+mitte mariadb connections stats mydb
 
 # Example: Analyze connection usage
 mitte mariadb connections analyze mydb
 
 # Example: Optimize with specific preset
 mitte mariadb connections optimize mydb --preset=high-traffic
+
+# Example: Apply pooling configuration from file
+mitte mariadb connections apply mydb --config-file=/path/to/pooling.cnf --restart
+
+# Example: Apply pooling configuration with flags
+mitte mariadb connections apply mydb --max-connections=500 --thread-cache-size=100 --innodb-buffer-pool-size=2G --restart
+
+# Example: Apply pooling preset
+mitte mariadb connections apply mydb --pooling-preset=high-traffic --restart
 
 # Permanently destroy a MariaDB instance and its data
 mitte mariadb destroy <instance-name>
@@ -303,14 +317,54 @@ mitte mariadb destroy <instance-name>
 
 **Connection Pooling**: Optimized database performance with:
 - Preset configurations (small, medium, large, high-traffic)
-- Automatic connection usage analysis
-- Intelligent configuration recommendations
+- Automatic connection usage analysis and statistics
+- Intelligent configuration recommendations with resource detection
+- Apply configuration to existing instances without recreation
 - Support for granular pooling parameters:
   - `max_connections`: Maximum concurrent connections
   - `thread_cache_size`: Threads cached for reuse
   - `table_open_cache`: Table descriptors cached
-  - `innodb_buffer_pool_size`: InnoDB memory allocation
+  - `innodb_buffer_pool_size`: InnoDB memory allocation (auto-calculated from container limits)
   - `query_cache_size`: Query result caching
+- Advanced features:
+  - Container memory limit detection for optimal buffer pool sizing
+  - Connection churn analysis to identify thread cache issues
+  - Live configuration reload (SIGHUP) without container restart
+  - Safe container restart option for parameters requiring full restart
+
+**Connection Pooling Commands in Detail**:
+
+1. **`mitte mariadb connections stats <instance-name>`**
+   - Shows current connection statistics without analysis
+   - Displays: Max Connections, Threads Connected, Threads Running, Threads Cached, Threads Created, Connection Usage %, Connection Churn
+
+2. **`mitte mariadb connections analyze <instance-name>`**
+   - Analyzes connection usage and provides recommendations
+   - Identifies: High connection usage, connection churn issues, long-running queries
+   - Suggests configuration improvements based on current usage patterns
+
+3. **`mitte mariadb connections optimize <instance-name> [--preset]`**
+   - Generates optimized configuration based on current usage or specified preset
+   - Auto-detects container memory limits for optimal buffer pool sizing
+   - Provides configuration that can be saved to a file and applied
+
+4. **`mitte mariadb connections apply <instance-name> [options] [--restart]`**
+   - Applies pooling configuration to existing instances
+   - Can use config file or command-line parameters
+   - Supports live reload (SIGHUP) without restart for most parameters
+   - `--restart` flag for parameters requiring full container restart
+
+**Pooling Presets**:
+- **small**: 100 connections, 8 thread cache, 256M buffer pool (development)
+- **medium**: 200 connections, 50 thread cache, 1G buffer pool (standard production)
+- **large**: 300 connections, 75 thread cache, 2G buffer pool (high-concurrency)
+- **high-traffic**: 500 connections, 100 thread cache, 4G buffer pool, optimized timeouts (enterprise)
+
+**Resource Detection**:
+- Auto-detects container memory limits from Docker
+- Calculates optimal InnoDB buffer pool size (75% of available RAM)
+- Ensures sufficient memory for OS and other processes
+- Falls back to preset defaults if detection fails
 
 **Example Configuration File** (`my-performance.cnf`):
 ```ini
