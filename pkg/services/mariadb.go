@@ -17,7 +17,7 @@ import (
 	"github.com/mitteapp/mitteapp/pkg/state"
 )
 
-func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version string) error {
+func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, configFile string) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -52,6 +52,17 @@ func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version stri
 	hostConfig := &container.HostConfig{
 		Binds:         []string{fmt.Sprintf("mitte-db-%s:/var/lib/mysql", instanceName)},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+
+	// Mount custom config file if provided
+	if configFile != "" {
+		// Validate config file exists
+		if _, err := os.Stat(configFile); os.IsNotExist(err) {
+			return fmt.Errorf("config file does not exist: %s", configFile)
+		}
+
+		// Add bind mount for config file
+		hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:/etc/mysql/conf.d/custom.cnf:ro", configFile))
 	}
 
 	networkingConfig := &network.NetworkingConfig{

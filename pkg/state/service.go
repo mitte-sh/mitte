@@ -19,6 +19,7 @@ type Service struct {
 	InternalHost string `json:"internal_host"`
 	Port         int    `json:"port"`
 	Username     string `json:"username"`
+	ConfigFile   string `json:"config_file"`
 }
 
 // LoadService reads the state file for a specific service instance.

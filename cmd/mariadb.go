@@ -105,6 +105,7 @@ var mariadbCreateCmd = &cobra.Command{
 		initialDatabase, _ := cmd.Flags().GetString("database")
 		user, _ := cmd.Flags().GetString("user")
 		userPassword, _ := cmd.Flags().GetString("password")
+		configFile, _ := cmd.Flags().GetString("config-file")
 
 		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
 
@@ -208,6 +209,18 @@ var mariadbCreateCmd = &cobra.Command{
 			}
 		}
 
+		// Mount custom config file if provided
+		if configFile != "" {
+			// Validate config file exists
+			if _, err := os.Stat(configFile); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: Config file does not exist: %s\n", configFile)
+				os.Exit(1)
+			}
+
+			// Add bind mount for config file
+			hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:/etc/mysql/conf.d/custom.cnf:ro", configFile))
+		}
+
 		networkingConfig := &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				"mitte": {},
@@ -251,6 +264,7 @@ var mariadbCreateCmd = &cobra.Command{
 		svc.Version = version
 		svc.Port = 3306
 		svc.Username = user
+		svc.ConfigFile = configFile
 		if err := svc.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
 			os.Exit(1)
@@ -430,6 +444,7 @@ func init() {
 	mariadbCreateCmd.Flags().String("database", "", "The name of a database to create on first startup")
 	mariadbCreateCmd.Flags().String("user", "", "The username for the database user (optional, defaults to root)")
 	mariadbCreateCmd.Flags().String("password", "", "The password for the database user (optional, will be generated if not provided)")
+	mariadbCreateCmd.Flags().String("config-file", "", "Path to a custom MariaDB configuration file (.cnf) to mount into the container")
 	mariadbCmd.AddCommand(mariadbListCmd)
 	mariadbCmd.AddCommand(mariadbCreateCmd)
 	mariadbCmd.AddCommand(mariadbDestroyCmd)
