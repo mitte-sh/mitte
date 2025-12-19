@@ -13,7 +13,7 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 *   🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
 *   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
 *   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
-*   🗄️ **MariaDB Support**: Built-in MariaDB database service for your applications.
+*   🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
 
 ### How It Works
 
@@ -205,7 +205,7 @@ Manage MariaDB database instances for your applications.
 mitte mariadb list
 
 # Create a new MariaDB instance
-mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password]
+mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--config-file=path]
 
 # Example: Create a MariaDB instance with version 10.11 and initial database 'myapp'
 mitte mariadb create mydb --version=10.11 --database=myapp
@@ -213,13 +213,62 @@ mitte mariadb create mydb --version=10.11 --database=myapp
 # Example: Create a MariaDB instance with a custom user
 mitte mariadb create mydb --user=myuser --database=myapp
 
+# Example: Create a MariaDB instance with custom configuration
+mitte mariadb create mydb --config-file=/path/to/my-config.cnf
+
 # Link a MariaDB instance to an app (sets DATABASE_URL)
 mitte mariadb link <instance-name> <app-name> [env-var-name]
 
 # This sets a DATABASE_URL environment variable in the format: mysql://user:password@instance:3306/database
 
+# Create a backup of all databases in a MariaDB instance
+mitte mariadb backup <instance-name> <output-file>
+
+# Example: Backup to a local file
+mitte mariadb backup mydb /backups/mydb-backup.sql
+
+# Restore databases from a backup file
+mitte mariadb restore <instance-name> <backup-file>
+
+# Example: Restore from backup
+mitte mariadb restore mydb /backups/mydb-backup.sql
+
 # Permanently destroy a MariaDB instance and its data
 mitte mariadb destroy <instance-name>
+```
+
+##### MariaDB Features
+
+**Health Checks**: All MariaDB containers include automatic health checks that:
+- Run `mysqladmin ping` every 10 seconds after a 30-second startup period
+- Mark containers unhealthy after 3 consecutive failures
+- Enable automatic restarts for reliable database operation
+
+**Backup/Restore**: Full database protection with:
+- Complete SQL dumps of all databases using `mysqldump`
+- Secure password retrieval from service state
+- Easy restoration from backup files
+
+**Custom Configuration**: Advanced database tuning with:
+- Mount custom `.cnf` files into `/etc/mysql/conf.d/custom.cnf`
+- Support for performance tuning, security settings, and production requirements
+- Read-only mounting for security
+
+**Example Configuration File** (`my-performance.cnf`):
+```ini
+[mariadbd]
+# Performance tuning
+innodb_buffer_pool_size = 1G
+max_connections = 200
+query_cache_size = 128M
+
+# Connection optimization
+thread_cache_size = 50
+table_open_cache = 2000
+
+# Monitoring
+slow_query_log = 1
+long_query_time = 2
 ```
 
 #### Access Management (SSH Keys)
