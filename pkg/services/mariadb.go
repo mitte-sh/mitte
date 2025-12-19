@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -433,4 +434,186 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	fmt.Printf("Backup saved to: %s\n", backupFile)
 
 	return nil
+}
+
+// GeneratePoolingConfig generates MariaDB configuration for connection pooling
+func GeneratePoolingConfig(preset string, maxConnections, threadCacheSize, tableOpenCache int, innodbBufferPoolSize, queryCacheSize string) (string, error) {
+	var config strings.Builder
+	config.WriteString("[mysqld]\n")
+
+	// Apply preset if specified
+	if preset != "" {
+		switch preset {
+		case "small":
+			if maxConnections == 0 {
+				maxConnections = 100
+			}
+			if threadCacheSize == 0 {
+				threadCacheSize = 8
+			}
+			if tableOpenCache == 0 {
+				tableOpenCache = 400
+			}
+			if innodbBufferPoolSize == "" {
+				innodbBufferPoolSize = "256M"
+			}
+			if queryCacheSize == "" {
+				queryCacheSize = "64M"
+			}
+		case "medium":
+			if maxConnections == 0 {
+				maxConnections = 200
+			}
+			if threadCacheSize == 0 {
+				threadCacheSize = 50
+			}
+			if tableOpenCache == 0 {
+				tableOpenCache = 1000
+			}
+			if innodbBufferPoolSize == "" {
+				innodbBufferPoolSize = "1G"
+			}
+			if queryCacheSize == "" {
+				queryCacheSize = "128M"
+			}
+		case "large":
+			if maxConnections == 0 {
+				maxConnections = 300
+			}
+			if threadCacheSize == 0 {
+				threadCacheSize = 75
+			}
+			if tableOpenCache == 0 {
+				tableOpenCache = 1500
+			}
+			if innodbBufferPoolSize == "" {
+				innodbBufferPoolSize = "2G"
+			}
+			if queryCacheSize == "" {
+				queryCacheSize = "256M"
+			}
+		case "high-traffic":
+			if maxConnections == 0 {
+				maxConnections = 500
+			}
+			if threadCacheSize == 0 {
+				threadCacheSize = 100
+			}
+			if tableOpenCache == 0 {
+				tableOpenCache = 2000
+			}
+			if innodbBufferPoolSize == "" {
+				innodbBufferPoolSize = "4G"
+			}
+			if queryCacheSize == "" {
+				queryCacheSize = "512M"
+			}
+			config.WriteString("max_connect_errors = 1000000\n")
+			config.WriteString("connect_timeout = 10\n")
+			config.WriteString("wait_timeout = 600\n")
+			config.WriteString("interactive_timeout = 600\n")
+		default:
+			return "", fmt.Errorf("unknown pooling preset: %s. Available presets: small, medium, large, high-traffic", preset)
+		}
+	}
+
+	// Add individual settings if specified
+	if maxConnections > 0 {
+		config.WriteString(fmt.Sprintf("max_connections = %d\n", maxConnections))
+	}
+	if threadCacheSize > 0 {
+		config.WriteString(fmt.Sprintf("thread_cache_size = %d\n", threadCacheSize))
+	}
+	if tableOpenCache > 0 {
+		config.WriteString(fmt.Sprintf("table_open_cache = %d\n", tableOpenCache))
+	}
+	if innodbBufferPoolSize != "" {
+		config.WriteString(fmt.Sprintf("innodb_buffer_pool_size = %s\n", innodbBufferPoolSize))
+	}
+	if queryCacheSize != "" {
+		config.WriteString(fmt.Sprintf("query_cache_size = %s\n", queryCacheSize))
+	}
+
+	return config.String(), nil
+}
+
+// ConnectionStats holds MariaDB connection statistics
+type ConnectionStats struct {
+	ThreadsConnected int     `json:"threads_connected"`
+	ThreadsRunning   int     `json:"threads_running"`
+	ThreadsCached    int     `json:"threads_cached"`
+	ThreadsCreated   int     `json:"threads_created"`
+	MaxConnections   int     `json:"max_connections"`
+	ConnectionUsage  float64 `json:"connection_usage"`
+	ConnectionChurn  float64 `json:"connection_churn"`
+}
+
+// AnalyzeConnections analyzes connection usage in a MariaDB instance
+func AnalyzeConnections(ctx context.Context, instanceName string) (*ConnectionStats, error) {
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load service state: %w", err)
+	}
+
+	if svc.RootPassword == "" {
+		return nil, fmt.Errorf("root password not found in service state")
+	}
+
+	stats := &ConnectionStats{}
+
+	// Get max_connections
+	maxConnSQL := "SHOW VARIABLES LIKE 'max_connections';"
+	cmd := exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-N", "-e", maxConnSQL)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get max_connections: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\t")
+	if len(lines) >= 2 {
+		if val, err := strconv.Atoi(lines[1]); err == nil {
+			stats.MaxConnections = val
+		}
+	}
+
+	// Get connection status
+	statusSQL := "SHOW STATUS WHERE Variable_name IN ('Threads_connected', 'Threads_running', 'Threads_cached', 'Threads_created');"
+	cmd = exec.Command("docker", "exec", instanceName, "mariadb", "-u", "root", "-p"+svc.RootPassword, "-N", "-e", statusSQL)
+	output, err = cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection status: %w", err)
+	}
+
+	lines = strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		parts := strings.Split(line, "\t")
+		if len(parts) >= 2 {
+			val, err := strconv.Atoi(parts[1])
+			if err != nil {
+				continue
+			}
+
+			switch parts[0] {
+			case "Threads_connected":
+				stats.ThreadsConnected = val
+			case "Threads_running":
+				stats.ThreadsRunning = val
+			case "Threads_cached":
+				stats.ThreadsCached = val
+			case "Threads_created":
+				stats.ThreadsCreated = val
+			}
+		}
+	}
+
+	// Calculate derived metrics
+	if stats.MaxConnections > 0 {
+		stats.ConnectionUsage = float64(stats.ThreadsConnected) / float64(stats.MaxConnections) * 100
+	}
+
+	if stats.ThreadsCached > 0 && stats.ThreadsCreated > 0 {
+		stats.ConnectionChurn = float64(stats.ThreadsCreated) / float64(stats.ThreadsCached)
+	}
+
+	return stats, nil
 }

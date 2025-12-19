@@ -23,6 +23,14 @@ type Service struct {
 	ConfigFile      string `json:"config_file"`
 	LastBackupPath  string `json:"last_backup_path,omitempty"`
 	UpgradedAt      string `json:"upgraded_at,omitempty"`
+
+	// Connection pooling configuration
+	MaxConnections       int    `json:"max_connections,omitempty"`
+	ThreadCacheSize      int    `json:"thread_cache_size,omitempty"`
+	TableOpenCache       int    `json:"table_open_cache,omitempty"`
+	InnoDBBufferPoolSize string `json:"innodb_buffer_pool_size,omitempty"`
+	QueryCacheSize       string `json:"query_cache_size,omitempty"`
+	PoolingPreset        string `json:"pooling_preset,omitempty"`
 }
 
 // LoadService reads the state file for a specific service instance.

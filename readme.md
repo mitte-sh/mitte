@@ -205,7 +205,7 @@ Manage MariaDB database instances for your applications.
 mitte mariadb list
 
 # Create a new MariaDB instance
-mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--config-file=path]
+mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--config-file=path] [--max-connections=N] [--thread-cache-size=N] [--table-open-cache=N] [--innodb-buffer-pool-size=SIZE] [--query-cache-size=SIZE] [--pooling-preset=PRESET]
 
 # Example: Create a MariaDB instance with version 10.11 and initial database 'myapp'
 mitte mariadb create mydb --version=10.11 --database=myapp
@@ -215,6 +215,12 @@ mitte mariadb create mydb --user=myuser --database=myapp
 
 # Example: Create a MariaDB instance with custom configuration
 mitte mariadb create mydb --config-file=/path/to/my-config.cnf
+
+# Example: Create with connection pooling preset
+mitte mariadb create mydb --pooling-preset=high-traffic --version=10.11
+
+# Example: Create with specific pooling configuration
+mitte mariadb create mydb --max-connections=500 --thread-cache-size=100 --innodb-buffer-pool-size=2G
 
 # Link a MariaDB instance to an app (sets DATABASE_URL)
 mitte mariadb link <instance-name> <app-name> [env-var-name]
@@ -257,6 +263,16 @@ mitte mariadb upgrade perform mydb --to-version=10.11
 # Example: Dry run upgrade to latest version
 mitte mariadb upgrade perform mydb --to-version=latest --dry-run
 
+# Connection pooling management
+mitte mariadb connections analyze <instance-name>
+mitte mariadb connections optimize <instance-name> [--preset=small|medium|large|high-traffic]
+
+# Example: Analyze connection usage
+mitte mariadb connections analyze mydb
+
+# Example: Optimize with specific preset
+mitte mariadb connections optimize mydb --preset=high-traffic
+
 # Permanently destroy a MariaDB instance and its data
 mitte mariadb destroy <instance-name>
 ```
@@ -284,6 +300,17 @@ mitte mariadb destroy <instance-name>
 - Dry-run mode for testing upgrades
 - Automatic `mysql_upgrade` execution when needed
 - Rollback tracking with previous version history
+
+**Connection Pooling**: Optimized database performance with:
+- Preset configurations (small, medium, large, high-traffic)
+- Automatic connection usage analysis
+- Intelligent configuration recommendations
+- Support for granular pooling parameters:
+  - `max_connections`: Maximum concurrent connections
+  - `thread_cache_size`: Threads cached for reuse
+  - `table_open_cache`: Table descriptors cached
+  - `innodb_buffer_pool_size`: InnoDB memory allocation
+  - `query_cache_size`: Query result caching
 
 **Example Configuration File** (`my-performance.cnf`):
 ```ini

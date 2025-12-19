@@ -99,6 +99,12 @@ var mariadbCreateCmd = &cobra.Command{
 		user, _ := cmd.Flags().GetString("user")
 		userPassword, _ := cmd.Flags().GetString("password")
 		configFile, _ := cmd.Flags().GetString("config-file")
+		maxConnections, _ := cmd.Flags().GetInt("max-connections")
+		threadCacheSize, _ := cmd.Flags().GetInt("thread-cache-size")
+		tableOpenCache, _ := cmd.Flags().GetInt("table-open-cache")
+		innodbBufferPoolSize, _ := cmd.Flags().GetString("innodb-buffer-pool-size")
+		queryCacheSize, _ := cmd.Flags().GetString("query-cache-size")
+		poolingPreset, _ := cmd.Flags().GetString("pooling-preset")
 
 		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
 
@@ -203,6 +209,35 @@ var mariadbCreateCmd = &cobra.Command{
 			}
 		}
 
+		// Generate pooling configuration if specified
+		var poolingConfigFile string
+		if poolingPreset != "" || maxConnections > 0 || threadCacheSize > 0 || tableOpenCache > 0 || innodbBufferPoolSize != "" || queryCacheSize != "" {
+			fmt.Fprintln(os.Stderr, "-----> Generating connection pooling configuration...")
+
+			configContent, err := services.GeneratePoolingConfig(poolingPreset, maxConnections, threadCacheSize, tableOpenCache, innodbBufferPoolSize, queryCacheSize)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Create temporary config file
+			tmpFile, err := os.CreateTemp("", fmt.Sprintf("mitte-pooling-%s-*.cnf", instanceName))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create temporary config file: %v\n", err)
+				os.Exit(1)
+			}
+			defer os.Remove(tmpFile.Name())
+
+			if _, err := tmpFile.WriteString(configContent); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to write config file: %v\n", err)
+				os.Exit(1)
+			}
+			tmpFile.Close()
+
+			poolingConfigFile = tmpFile.Name()
+			hostConfig.Binds = append(hostConfig.Binds, fmt.Sprintf("%s:/etc/mysql/conf.d/pooling.cnf:ro", poolingConfigFile))
+		}
+
 		// Mount custom config file if provided
 		if configFile != "" {
 			// Validate config file exists
@@ -259,6 +294,27 @@ var mariadbCreateCmd = &cobra.Command{
 		svc.Port = 3306
 		svc.Username = user
 		svc.ConfigFile = configFile
+
+		// Save pooling configuration
+		if maxConnections > 0 {
+			svc.MaxConnections = maxConnections
+		}
+		if threadCacheSize > 0 {
+			svc.ThreadCacheSize = threadCacheSize
+		}
+		if tableOpenCache > 0 {
+			svc.TableOpenCache = tableOpenCache
+		}
+		if innodbBufferPoolSize != "" {
+			svc.InnoDBBufferPoolSize = innodbBufferPoolSize
+		}
+		if queryCacheSize != "" {
+			svc.QueryCacheSize = queryCacheSize
+		}
+		if poolingPreset != "" {
+			svc.PoolingPreset = poolingPreset
+		}
+
 		if err := svc.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
 			os.Exit(1)
@@ -635,6 +691,12 @@ func init() {
 	mariadbCreateCmd.Flags().String("user", "", "The username for the database user (optional, defaults to root)")
 	mariadbCreateCmd.Flags().String("password", "", "The password for the database user (optional, will be generated if not provided)")
 	mariadbCreateCmd.Flags().String("config-file", "", "Path to a custom MariaDB configuration file (.cnf) to mount into the container")
+	mariadbCreateCmd.Flags().Int("max-connections", 0, "Maximum number of concurrent connections (default: MariaDB default)")
+	mariadbCreateCmd.Flags().Int("thread-cache-size", 0, "Number of threads to cache for reuse (default: MariaDB default)")
+	mariadbCreateCmd.Flags().Int("table-open-cache", 0, "Number of table descriptors to cache (default: MariaDB default)")
+	mariadbCreateCmd.Flags().String("innodb-buffer-pool-size", "", "Size of InnoDB buffer pool (e.g., 1G, 512M)")
+	mariadbCreateCmd.Flags().String("query-cache-size", "", "Size of query cache (e.g., 128M, 256M)")
+	mariadbCreateCmd.Flags().String("pooling-preset", "", "Connection pooling preset (small, medium, large, high-traffic)")
 	mariadbCmd.AddCommand(mariadbListCmd)
 	mariadbCmd.AddCommand(mariadbCreateCmd)
 	mariadbCmd.AddCommand(mariadbDestroyCmd)
@@ -660,6 +722,130 @@ func init() {
 	mariadbUpgradeCmd.AddCommand(mariadbUpgradeCheckCmd)
 	mariadbUpgradeCmd.AddCommand(mariadbUpgradePerformCmd)
 	mariadbCmd.AddCommand(mariadbUpgradeCmd)
+
+	// Connections management commands
+	var mariadbConnectionsCmd = &cobra.Command{
+		Use:   "connections",
+		Short: "Manage MariaDB connection pooling",
+	}
+
+	var mariadbConnectionsAnalyzeCmd = &cobra.Command{
+		Use:   "analyze <instance-name>",
+		Short: "Analyze connection usage in a MariaDB instance",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			instanceName := args[0]
+
+			fmt.Fprintf(os.Stderr, "-----> Analyzing connections for MariaDB instance '%s'...\n", instanceName)
+
+			stats, err := services.AnalyzeConnections(context.Background(), instanceName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to analyze connections: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("Connection Statistics:")
+			fmt.Printf("  Max Connections: %d\n", stats.MaxConnections)
+			fmt.Printf("  Threads Connected: %d\n", stats.ThreadsConnected)
+			fmt.Printf("  Threads Running: %d\n", stats.ThreadsRunning)
+			fmt.Printf("  Threads Cached: %d\n", stats.ThreadsCached)
+			fmt.Printf("  Threads Created: %d\n", stats.ThreadsCreated)
+			fmt.Printf("  Connection Usage: %.1f%%\n", stats.ConnectionUsage)
+			fmt.Printf("  Connection Churn: %.2f\n", stats.ConnectionChurn)
+
+			fmt.Println("\nAnalysis:")
+			if stats.ConnectionUsage > 80 {
+				fmt.Println("  ⚠️  High connection usage! Consider increasing max_connections.")
+			} else if stats.ConnectionUsage > 50 {
+				fmt.Println("  ⚠️  Moderate connection usage. Monitor for growth.")
+			} else {
+				fmt.Println("  ✅ Connection usage is healthy.")
+			}
+
+			if stats.ConnectionChurn > 10 {
+				fmt.Println("  ⚠️  High connection churn! Consider increasing thread_cache_size.")
+			} else if stats.ConnectionChurn > 5 {
+				fmt.Println("  ⚠️  Moderate connection churn. Monitor thread creation.")
+			} else {
+				fmt.Println("  ✅ Connection caching is effective.")
+			}
+
+			if stats.ThreadsRunning > stats.ThreadsConnected/2 {
+				fmt.Println("  ⚠️  High number of running threads. Check for long-running queries.")
+			}
+		},
+	}
+
+	var mariadbConnectionsOptimizeCmd = &cobra.Command{
+		Use:   "optimize <instance-name>",
+		Short: "Optimize connection pooling configuration",
+		Long: `This command analyzes current connection usage and suggests optimal
+pooling configuration based on the workload patterns.`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			instanceName := args[0]
+			preset, _ := cmd.Flags().GetString("preset")
+
+			fmt.Fprintf(os.Stderr, "-----> Optimizing connection pooling for MariaDB instance '%s'...\n", instanceName)
+
+			// Load current service to get existing configuration
+			svc, err := state.LoadService("mariadb", instanceName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to load service state: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Use preset if provided, otherwise analyze and suggest
+			if preset == "" {
+				// Analyze current usage to suggest preset
+				stats, err := services.AnalyzeConnections(context.Background(), instanceName)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to analyze connections: %v\n", err)
+					os.Exit(1)
+				}
+
+				// Suggest preset based on usage
+				if stats.ConnectionUsage > 70 || stats.ThreadsConnected > 200 {
+					preset = "high-traffic"
+				} else if stats.ThreadsConnected > 100 {
+					preset = "large"
+				} else if stats.ThreadsConnected > 50 {
+					preset = "medium"
+				} else {
+					preset = "small"
+				}
+
+				fmt.Printf("Based on current usage (%d connections), suggesting '%s' preset.\n", stats.ThreadsConnected, preset)
+			}
+
+			// Generate configuration using existing values or preset defaults
+			config, err := services.GeneratePoolingConfig(
+				preset,
+				svc.MaxConnections,
+				svc.ThreadCacheSize,
+				svc.TableOpenCache,
+				svc.InnoDBBufferPoolSize,
+				svc.QueryCacheSize,
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("Recommended Pooling Configuration:")
+			fmt.Println(config)
+			fmt.Println("To apply this configuration:")
+			fmt.Printf("  1. Save the above configuration to a file (e.g., pooling.cnf)\n")
+			fmt.Printf("  2. Run: mitte mariadb create %s --config-file=pooling.cnf\n", instanceName)
+			fmt.Println("     (Note: This will recreate the instance. For existing instances, manually update the config file.)")
+		},
+	}
+
+	mariadbConnectionsOptimizeCmd.Flags().String("preset", "", "Connection pooling preset to use (small, medium, large, high-traffic)")
+
+	mariadbConnectionsCmd.AddCommand(mariadbConnectionsAnalyzeCmd)
+	mariadbConnectionsCmd.AddCommand(mariadbConnectionsOptimizeCmd)
+	mariadbCmd.AddCommand(mariadbConnectionsCmd)
 
 	rootCmd.AddCommand(mariadbCmd)
 }
