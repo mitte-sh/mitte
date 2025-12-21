@@ -15,6 +15,8 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 *   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
 *   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
 *   🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
+*   🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
+*   🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
 
 ### How It Works
 
@@ -129,6 +131,8 @@ The system will detect the pre-built image configuration and deploy it directly 
 
 Mitte supports deploying applications using Cloud Native Buildpacks (CNB), which automatically detect your application's language and framework, eliminating the need for a `Dockerfile`. This is perfect for standard applications in popular languages.
 
+**Note**: Buildpack support requires the `pack` CLI (v0.39.0 or later) to be installed on your server. The `mitte setup` command automatically installs the latest compatible version. If you're using Docker 29.x or later, you need pack v0.39.0+ for Docker API compatibility.
+
 **1. Configure Buildpack for Your App**
 
 ```bash
@@ -157,9 +161,9 @@ Mitte will automatically detect your application type based on files like `packa
 Mitte can automatically detect and build applications in:
 - **Node.js** (`package.json`)
 - **Python** (`requirements.txt`, `Pipfile`, `pyproject.toml`)
-- **Go** (`go.mod`, `go.sum`)
-- **Java** (`pom.xml`, `build.gradle`)
-- **.NET** (`*.csproj`, `*.fsproj`)
+- **Go** (`go.mod`, `go.sum`, `main.go`)
+- **Java** (`pom.xml`, `build.gradle`, `build.gradle.kts`)
+- **.NET** (`*.csproj`, `*.fsproj`, `project.json`)
 - **Ruby** (`Gemfile`)
 - **PHP** (`composer.json`)
 
@@ -464,6 +468,56 @@ mitte setup
 # Add a git remote to your local project (run on your local machine)
 # Replaces 'git remote add ...'
 mitte remote --host your-server.com --app my-awesome-app
+```
+
+### 🛠️ Troubleshooting
+
+#### Caddy "Connection Refused" Errors After Docker Restart
+
+If you see errors like `dial tcp 127.0.0.1:33188: connect: connection refused` in Caddy logs after Docker restarts, this is because containers get new random ports. Mitte includes several solutions:
+
+**Immediate Fix:**
+```bash
+# Fix all broken routes
+sudo mitte fix-routes
+
+# Or restart a specific app
+sudo mitte apps restart <appname>
+```
+
+**Automatic Prevention:**
+The setup process installs a container watcher service that automatically detects port changes and updates Caddy. You can manage it with:
+
+```bash
+# Check watcher status
+sudo mitte watcher status
+
+# Restart the watcher
+sudo mitte watcher restart
+
+# View watcher logs
+sudo mitte watcher logs
+```
+
+**Manual Route Management:**
+```bash
+# List all apps and their current ports
+sudo mitte apps list
+
+# Check if an app's route exists
+sudo mitte routes check <appname>
+
+# Manually update an app's route
+sudo mitte routes update <appname> <port>
+```
+
+#### Buildpack Issues with Docker 29.x+
+
+If you encounter Docker API version errors with buildpacks, ensure you have pack CLI v0.39.0+ installed:
+
+```bash
+# The setup command installs the correct version automatically
+sudo mitte setup
 ```
 
 ### 💖 Contributing

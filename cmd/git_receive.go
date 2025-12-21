@@ -59,6 +59,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 			Volumes:       []string{},
 			Ports:         []string{},
 			ContainerName: "",
+			HostPort:      "",
 		}
 	}
 
@@ -186,6 +187,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 				AppName:      appName,
 				EnvVars:      make(map[string]string),
 				BuildpackEnv: make(map[string]string),
+				HostPort:     "",
 			}
 		}
 
@@ -263,6 +265,9 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "-----> Assigning default domain: %s\n", defaultDomain)
 		app.Domains = append(app.Domains, defaultDomain)
 	}
+
+	// Save host port to app state
+	app.HostPort = deployResult.HostPort
 
 	// Save the state to disk. This creates/updates the .json file.
 	if err := app.Save(); err != nil {

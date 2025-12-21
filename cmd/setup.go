@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -82,7 +83,11 @@ command that should be run on a fresh server.`,
 			fmt.Println("   Network 'mitte' already exists.")
 		}
 
-		// --- 12. Final Steps ---
+		// --- 12. Install Container Watcher Service ---
+		fmt.Println("\n-- Installing Container Watcher Service --")
+		installContainerWatcher()
+
+		// --- 13. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 
@@ -172,13 +177,28 @@ func installContainerRuntime(containerTool string) {
 
 	if osID == "rocky" {
 		if containerTool == "docker" {
+			// Remove any existing Docker packages to avoid conflicts
+			if err := runCommand("dnf", "remove", "-y", "docker", "docker-client", "docker-client-latest", "docker-common", "docker-latest", "docker-latest-logrotate", "docker-logrotate", "docker-engine", "docker-ce", "docker-ce-cli", "containerd.io"); err != nil {
+				fmt.Println("Warning: Failed to remove existing Docker packages:", err)
+			}
+
 			if err := runCommand("dnf", "config-manager", "--add-repo", "https://download.docker.com/linux/centos/docker-ce.repo"); err != nil {
 				fmt.Println("Error adding Docker repository:", err)
 				os.Exit(1)
 			}
 
-			if err := runCommand("dnf", "install", "-y", "docker-ce", "docker-ce-cli", "containerd.io"); err != nil {
-				fmt.Println("Error installing DNF plugins:", err)
+			// Clean cache and update to get latest versions
+			if err := runCommand("dnf", "clean", "all"); err != nil {
+				fmt.Println("Warning: Failed to clean DNF cache:", err)
+			}
+
+			if err := runCommand("dnf", "makecache"); err != nil {
+				fmt.Println("Warning: Failed to update DNF cache:", err)
+			}
+
+			// Install latest Docker version
+			if err := runCommand("dnf", "install", "-y", "--refresh", "docker-ce", "docker-ce-cli", "containerd.io", "--nobest"); err != nil {
+				fmt.Println("Error installing Docker:", err)
 				os.Exit(1)
 			}
 
@@ -260,12 +280,6 @@ func installVersionControlSystem(vcs string) {
 }
 
 func installBuildpackCLI() {
-	osID, err := getOS()
-	if err != nil {
-		fmt.Println("Error getting OS:", err)
-		os.Exit(1)
-	}
-
 	// Check if pack CLI is already installed
 	if _, err := exec.LookPath("pack"); err == nil {
 		fmt.Println("   pack CLI is already installed")
@@ -274,62 +288,148 @@ func installBuildpackCLI() {
 
 	fmt.Println("   Installing pack CLI...")
 
-	if osID == "rocky" {
-		// For Rocky Linux, download the binary directly
-		if err := runCommand("curl", "-sSL", "https://github.com/buildpacks/pack/releases/download/v0.38.1/pack-v0.38.1-linux.tgz", "-o", "/tmp/pack.tgz"); err != nil {
-			fmt.Println("Error downloading pack CLI:", err)
-			os.Exit(1)
-		}
+	// For Rocky Linux, use a direct binary download approach
+	// The official script has issues on some systems
+	// Try to find a pack CLI version that works with newer Docker
+	// v0.39.0+ includes Docker API version negotiation (fixes Docker 29.x compatibility)
+	// Try newer versions first for better Docker 29.x compatibility
+	versions := []string{"v0.40.0", "v0.39.1", "v0.39.0", "v0.38.2", "v0.38.1", "v0.37.0"}
+	var url string
+	var selectedVersion string
 
-		if err := runCommand("tar", "-xzf", "/tmp/pack.tgz", "-C", "/tmp"); err != nil {
-			fmt.Println("Error extracting pack CLI:", err)
-			os.Exit(1)
-		}
-
-		if err := runCommand("mv", "/tmp/pack", "/usr/local/bin/pack"); err != nil {
-			fmt.Println("Error moving pack binary:", err)
-			os.Exit(1)
-		}
-
-		if err := runCommand("chmod", "+x", "/usr/local/bin/pack"); err != nil {
-			fmt.Println("Error setting executable permissions:", err)
-			os.Exit(1)
-		}
-
-		if err := os.Remove("/tmp/pack.tgz"); err != nil {
-			fmt.Println("Warning: Failed to clean up pack archive:", err)
+	for _, v := range versions {
+		testURL := fmt.Sprintf("https://github.com/buildpacks/pack/releases/download/%s/pack-%s-linux.tgz", v, v)
+		// Check if the URL exists
+		cmd := exec.Command("curl", "-sSL", "-I", "-f", "-L", testURL)
+		if cmd.Run() == nil {
+			url = testURL
+			selectedVersion = v
+			break
 		}
 	}
 
-	if osID == "ubuntu" {
-		// For Ubuntu, use the official installation script
-		if err := runCommand("curl", "-sSL", "https://raw.githubusercontent.com/buildpacks/pack/main/install.sh", "-o", "/tmp/install-pack.sh"); err != nil {
-			fmt.Println("Error downloading pack install script:", err)
-			os.Exit(1)
-		}
-
-		if err := runCommand("chmod", "+x", "/tmp/install-pack.sh"); err != nil {
-			fmt.Println("Error setting executable permissions:", err)
-			os.Exit(1)
-		}
-
-		if err := runCommand("/tmp/install-pack.sh"); err != nil {
-			fmt.Println("Error running pack install script:", err)
-			os.Exit(1)
-		}
-
-		if err := os.Remove("/tmp/install-pack.sh"); err != nil {
-			fmt.Println("Warning: Failed to clean up install script:", err)
-		}
-	}
-
-	// Verify installation
-	if _, err := exec.LookPath("pack"); err != nil {
-		fmt.Println("Error: pack CLI installation failed:", err)
+	if url == "" {
+		fmt.Println("Error: Could not find a valid pack CLI release")
 		os.Exit(1)
 	}
 
-	fmt.Println("   ✅ pack CLI installed successfully")
+	fmt.Printf("   Using pack CLI version: %s\n", selectedVersion)
+
+	// Download the tarball
+	if err := runCommand("curl", "-sSL", "-L", url, "-o", "/tmp/pack.tgz"); err != nil {
+		fmt.Println("Error downloading pack CLI:", err)
+		os.Exit(1)
+	}
+
+	// Create a temporary directory for extraction
+	tmpDir := "/tmp/pack-install"
+	if err := os.RemoveAll(tmpDir); err != nil {
+		fmt.Println("Warning: Failed to clean up temp directory:", err)
+	}
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		fmt.Println("Error creating temp directory:", err)
+		os.Exit(1)
+	}
+
+	// Extract the tarball
+	if err := runCommand("tar", "-xzf", "/tmp/pack.tgz", "-C", tmpDir); err != nil {
+		fmt.Println("Error extracting pack CLI:", err)
+		os.Exit(1)
+	}
+
+	// List extracted files for debugging
+	listCmd := exec.Command("ls", "-la", tmpDir)
+	if output, err := listCmd.Output(); err == nil {
+		fmt.Printf("   Extracted files in %s:\n%s\n", tmpDir, string(output))
+	}
+
+	// Find and install the binary
+	// First, check what was extracted
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		fmt.Println("Error reading temp directory:", err)
+		os.Exit(1)
+	}
+
+	var packBinary string
+	found := false
+
+	// Look for the pack binary
+	for _, entry := range entries {
+		if entry.Name() == "pack" && !entry.IsDir() {
+			packBinary = filepath.Join(tmpDir, entry.Name())
+			found = true
+			break
+		}
+		if entry.IsDir() && strings.Contains(entry.Name(), "pack") {
+			// Check inside directory
+			dirPath := filepath.Join(tmpDir, entry.Name())
+			subEntries, err := os.ReadDir(dirPath)
+			if err != nil {
+				continue
+			}
+			for _, subEntry := range subEntries {
+				if subEntry.Name() == "pack" && !subEntry.IsDir() {
+					packBinary = filepath.Join(dirPath, subEntry.Name())
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+	}
+
+	if !found {
+		fmt.Println("Error: Could not find pack binary in extracted files")
+		os.Exit(1)
+	}
+
+	if err := runCommand("cp", packBinary, "/usr/local/bin/pack"); err != nil {
+		fmt.Println("Error copying pack binary:", err)
+		os.Exit(1)
+	}
+
+	if err := runCommand("chmod", "+x", "/usr/local/bin/pack"); err != nil {
+		fmt.Println("Error setting executable permissions:", err)
+		os.Exit(1)
+	}
+
+	// Debug: Check if the file exists and is executable
+	if stat, err := os.Stat("/usr/local/bin/pack"); err != nil {
+		fmt.Printf("Error: pack binary not found at /usr/local/bin/pack: %v\n", err)
+		os.Exit(1)
+	} else {
+		fmt.Printf("   pack binary installed: size=%d, mode=%v\n", stat.Size(), stat.Mode())
+		// Check if it's executable
+		if stat.Mode()&0111 == 0 {
+			fmt.Println("Error: pack binary is not executable")
+			os.Exit(1)
+		}
+	}
+
+	// Clean up
+	if err := os.RemoveAll(tmpDir); err != nil {
+		fmt.Println("Warning: Failed to clean up temp directory:", err)
+	}
+	if err := os.Remove("/tmp/pack.tgz"); err != nil {
+		fmt.Println("Warning: Failed to clean up pack archive:", err)
+	}
+
+	// Verify installation by trying to run the binary directly
+	// Instead of using exec.LookPath(), which might have PATH issues
+	cmd := exec.Command("/usr/local/bin/pack", "--version")
+	if output, err := cmd.Output(); err != nil {
+		fmt.Printf("Error: pack CLI verification failed: %v\n", err)
+		// Try to get stderr for more info
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			fmt.Printf("Stderr: %s\n", exitErr.Stderr)
+		}
+		os.Exit(1)
+	} else {
+		fmt.Printf("   ✅ pack CLI installed successfully: %s", string(output))
+	}
 }
 
 func createUser() {
@@ -419,7 +519,9 @@ func configureSudoers() {
 	// Caddy-related permissions
 	sudoersCaddyContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /etc/caddy/Caddyfile.d\n" +
 		"mitte ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/caddy/Caddyfile.d/*\n" +
-		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload caddy\n"
+		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload caddy\n" +
+		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mitte-watcher\n" +
+		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl status mitte-watcher\n"
 	sudoersCaddyFilePath := "/etc/sudoers.d/mitte-caddy"
 	if err := os.WriteFile(sudoersCaddyFilePath, []byte(sudoersCaddyContent), 0440); err != nil {
 		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersCaddyFilePath, err)
@@ -672,4 +774,58 @@ func configureBaseDomain() error {
 
 	fmt.Printf("✅ Base domain set to '%s'.\n", domain)
 	return nil
+}
+
+func installContainerWatcher() {
+	fmt.Println("   Installing container watcher service...")
+
+	// Copy the service file
+	serviceContent := `[Unit]
+Description=Mitte Docker Container Watcher
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mitte watch-containers
+Restart=always
+RestartSec=10
+User=root
+Group=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mitte /etc/caddy
+
+[Install]
+WantedBy=multi-user.target`
+
+	servicePath := "/etc/systemd/system/mitte-watcher.service"
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+		fmt.Printf("Error creating watcher service file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Reload systemd
+	if err := runCommand("systemctl", "daemon-reload"); err != nil {
+		fmt.Printf("Error reloading systemd: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Enable and start the service
+	if err := runCommand("systemctl", "enable", "mitte-watcher.service"); err != nil {
+		fmt.Printf("Error enabling watcher service: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := runCommand("systemctl", "start", "mitte-watcher.service"); err != nil {
+		fmt.Printf("Error starting watcher service: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("   ✅ Container watcher service installed and started")
 }

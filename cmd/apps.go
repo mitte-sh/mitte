@@ -278,6 +278,12 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// --- 4.5. Save host port to app state ---
+	app.HostPort = deployResult.HostPort
+	if err = app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save host port: %v\n", err)
+	}
+
 	// --- 5. Route traffic ---
 	fmt.Fprintln(os.Stderr, "Routing traffic...")
 	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
@@ -461,7 +467,13 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 9. Update routes
+	// 9. Save host port to app state
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
+	}
+
+	// 10. Update routes
 	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
 	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
@@ -748,6 +760,12 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
 		os.Exit(1)
+	}
+
+	// 4.5. Save host port to app state
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
 	}
 
 	// 5. Update routes

@@ -111,13 +111,37 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 			fmt.Fprintf(os.Stderr, "Warning: Could not inspect image ports: %v\n", err)
 		} else if len(exposedPorts) > 0 {
 			fmt.Fprintf(os.Stderr, "-----> Auto-binding exposed ports: %v\n", exposedPorts)
-			for _, port := range exposedPorts {
-				// Bind to a random host port (empty HostPort means random)
-				portBindings[port] = []nat.PortBinding{
-					{
-						HostIP:   "0.0.0.0",
-						HostPort: "", // Random port
-					},
+
+			// Try to use previously assigned port if available
+			usePreviousPort := false
+			previousPort := ""
+
+			// Load app state to check for previous port
+			appState, err := state.Load(appName)
+			if err == nil && appState.HostPort != "" {
+				previousPort = appState.HostPort
+				usePreviousPort = true
+				fmt.Fprintf(os.Stderr, "-----> Found previous port: %s\n", previousPort)
+			}
+
+			for i, port := range exposedPorts {
+				// For the first exposed port, try to use previous port if available
+				if i == 0 && usePreviousPort {
+					portBindings[port] = []nat.PortBinding{
+						{
+							HostIP:   "0.0.0.0",
+							HostPort: previousPort,
+						},
+					}
+					fmt.Fprintf(os.Stderr, "-----> Using previous port %s for %s\n", previousPort, port)
+				} else {
+					// Bind to a random host port (empty HostPort means random)
+					portBindings[port] = []nat.PortBinding{
+						{
+							HostIP:   "0.0.0.0",
+							HostPort: "", // Random port
+						},
+					}
 				}
 			}
 		}
