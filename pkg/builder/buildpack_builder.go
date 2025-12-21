@@ -142,7 +142,9 @@ func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branch
 
 	// Check if pack CLI is available
 	if _, err := exec.LookPath("pack"); err != nil {
-		return "", fmt.Errorf("pack CLI not found. Please install it from https://buildpacks.io/docs/tools/pack/")
+		return "", fmt.Errorf("pack CLI not found. Buildpack support requires pack CLI.\n" +
+			"Please run 'sudo mitte setup' to install all dependencies, or install pack CLI manually:\n" +
+			"  https://buildpacks.io/docs/tools/pack/")
 	}
 
 	// Use pack CLI to build the application

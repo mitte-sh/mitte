@@ -59,13 +59,17 @@ command that should be run on a fresh server.`,
 		fmt.Println("\n-- Installing Version Control System --")
 		installVersionControlSystem(versionControlSystem)
 
-		// --- 9. Configure Base Domain ---
+		// --- 9. Install Buildpack CLI ---
+		fmt.Println("\n-- Installing Buildpack CLI (pack) --")
+		installBuildpackCLI()
+
+		// --- 10. Configure Base Domain ---
 		fmt.Println("\n-- Configuring Base Domain --")
 		if err := configureBaseDomain(); err != nil {
 			log.Fatalf("Error configuring base domain: %v", err)
 		}
 
-		// --- 10. Create Mitte's Docker Network ---
+		// --- 11. Create Mitte's Docker Network ---
 		fmt.Println("\n-- Creating 'mitte' Docker network --")
 		err := exec.Command("docker", "network", "inspect", "mitte").Run()
 		if err != nil {
@@ -78,7 +82,7 @@ command that should be run on a fresh server.`,
 			fmt.Println("   Network 'mitte' already exists.")
 		}
 
-		// --- 11. Final Steps ---
+		// --- 12. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 
@@ -253,6 +257,79 @@ func installVersionControlSystem(vcs string) {
 			os.Exit(1)
 		}
 	}
+}
+
+func installBuildpackCLI() {
+	osID, err := getOS()
+	if err != nil {
+		fmt.Println("Error getting OS:", err)
+		os.Exit(1)
+	}
+
+	// Check if pack CLI is already installed
+	if _, err := exec.LookPath("pack"); err == nil {
+		fmt.Println("   pack CLI is already installed")
+		return
+	}
+
+	fmt.Println("   Installing pack CLI...")
+
+	if osID == "rocky" {
+		// For Rocky Linux, download the binary directly
+		if err := runCommand("curl", "-sSL", "https://github.com/buildpacks/pack/releases/download/v0.38.1/pack-v0.38.1-linux.tgz", "-o", "/tmp/pack.tgz"); err != nil {
+			fmt.Println("Error downloading pack CLI:", err)
+			os.Exit(1)
+		}
+
+		if err := runCommand("tar", "-xzf", "/tmp/pack.tgz", "-C", "/tmp"); err != nil {
+			fmt.Println("Error extracting pack CLI:", err)
+			os.Exit(1)
+		}
+
+		if err := runCommand("mv", "/tmp/pack", "/usr/local/bin/pack"); err != nil {
+			fmt.Println("Error moving pack binary:", err)
+			os.Exit(1)
+		}
+
+		if err := runCommand("chmod", "+x", "/usr/local/bin/pack"); err != nil {
+			fmt.Println("Error setting executable permissions:", err)
+			os.Exit(1)
+		}
+
+		if err := os.Remove("/tmp/pack.tgz"); err != nil {
+			fmt.Println("Warning: Failed to clean up pack archive:", err)
+		}
+	}
+
+	if osID == "ubuntu" {
+		// For Ubuntu, use the official installation script
+		if err := runCommand("curl", "-sSL", "https://raw.githubusercontent.com/buildpacks/pack/main/install.sh", "-o", "/tmp/install-pack.sh"); err != nil {
+			fmt.Println("Error downloading pack install script:", err)
+			os.Exit(1)
+		}
+
+		if err := runCommand("chmod", "+x", "/tmp/install-pack.sh"); err != nil {
+			fmt.Println("Error setting executable permissions:", err)
+			os.Exit(1)
+		}
+
+		if err := runCommand("/tmp/install-pack.sh"); err != nil {
+			fmt.Println("Error running pack install script:", err)
+			os.Exit(1)
+		}
+
+		if err := os.Remove("/tmp/install-pack.sh"); err != nil {
+			fmt.Println("Warning: Failed to clean up install script:", err)
+		}
+	}
+
+	// Verify installation
+	if _, err := exec.LookPath("pack"); err != nil {
+		fmt.Println("Error: pack CLI installation failed:", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("   ✅ pack CLI installed successfully")
 }
 
 func createUser() {
