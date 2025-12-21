@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -112,13 +113,64 @@ func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branch
 	fmt.Fprintf(os.Stderr, "-----> Using buildpack: %s\n", buildpackConfig.BuildpackID)
 	fmt.Fprintf(os.Stderr, "-----> Buildpack URI: %s\n", buildpackConfig.BuildpackURI)
 
-	// TODO: Implement full CNB lifecycle integration
-	// This would involve:
-	// 1. Creating proper buildpack registry integration
-	// 2. Setting up the CNB lifecycle phases (analyze, detect, restore, build, export)
-	// 3. Managing buildpack layers and cache
-	// 4. Integrating with Docker registry for image creation
+	// Create temporary directories for buildpack lifecycle
+	layersDir, err := os.MkdirTemp("", "mitte-buildpack-layers-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create layers directory: %w", err)
+	}
+	defer os.RemoveAll(layersDir)
 
-	// For now, return an error indicating this is not yet fully implemented
-	return "", fmt.Errorf("buildpack support is not yet fully implemented - this is a placeholder for future CNB integration")
+	platformDir, err := os.MkdirTemp("", "mitte-buildpack-platform-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create platform directory: %w", err)
+	}
+	defer os.RemoveAll(platformDir)
+
+	// Create platform environment files
+	envDir := filepath.Join(platformDir, "env")
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create env directory: %w", err)
+	}
+
+	// Write environment variables to platform/env
+	for key, value := range envVars {
+		envFile := filepath.Join(envDir, key)
+		if err := os.WriteFile(envFile, []byte(value), 0644); err != nil {
+			return "", fmt.Errorf("failed to write env var %s: %w", key, err)
+		}
+	}
+
+	// Check if pack CLI is available
+	if _, err := exec.LookPath("pack"); err != nil {
+		return "", fmt.Errorf("pack CLI not found. Please install it from https://buildpacks.io/docs/tools/pack/")
+	}
+
+	// Use pack CLI to build the application
+	// This is a simpler approach than directly using the lifecycle library
+	fmt.Fprintln(os.Stderr, "-----> Running pack build...")
+
+	cmdArgs := []string{
+		"build",
+		imageTag,
+		"--path", buildDir,
+		"--builder", "paketobuildpacks/builder:base",
+		"--trust-builder",
+		"--verbose",
+	}
+
+	// If a specific buildpack is configured, use it
+	if buildpackConfig.BuildpackID != "" {
+		cmdArgs = append(cmdArgs, "--buildpack", buildpackConfig.BuildpackID)
+	}
+
+	cmd := exec.CommandContext(ctx, "pack", cmdArgs...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pack build failed: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n-----> Successfully built image %s with buildpacks\n", imageTag)
+	return imageTag, nil
 }
