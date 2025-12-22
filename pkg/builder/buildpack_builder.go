@@ -93,13 +93,13 @@ func hasFile(dir, pattern string) bool {
 	return !os.IsNotExist(err)
 }
 
-// updatePackCLI attempts to update pack CLI to v0.40.0 for better Docker 29.x compatibility
+// updatePackCLI attempts to update pack CLI to latest version for better Docker 29.x compatibility
 func updatePackCLI() error {
-	fmt.Fprintln(os.Stderr, "-----> Downloading pack CLI v0.40.0...")
+	fmt.Fprintln(os.Stderr, "-----> Downloading latest pack CLI...")
 
-	// Download v0.40.0
-	url := "https://github.com/buildpacks/pack/releases/download/v0.40.0/pack-v0.40.0-linux.tgz"
-	tmpFile := "/tmp/pack-v0.40.0.tgz"
+	// Download v0.39.0 which has Docker API version negotiation fix
+	url := "https://github.com/buildpacks/pack/releases/download/v0.39.0/pack-v0.39.0-linux.tgz"
+	tmpFile := "/tmp/pack-v0.39.0.tgz"
 
 	// Download
 	cmd := exec.Command("curl", "-sSL", "-L", url, "-o", tmpFile)
@@ -119,6 +119,7 @@ func updatePackCLI() error {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to extract pack CLI: %v, output: %s", err, output)
 	}
+	defer os.Remove(tmpFile)
 
 	// Find the binary
 	var packBinary string
@@ -137,16 +138,33 @@ func updatePackCLI() error {
 		return fmt.Errorf("could not find pack binary in archive")
 	}
 
-	// Install
-	cmd = exec.Command("cp", packBinary, "/usr/local/bin/pack")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to copy pack binary: %v, output: %s", err, output)
+	// Install to user's home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Can't update pack CLI without home directory
+		fmt.Fprintln(os.Stderr, "-----> Warning: Could not determine home directory, skipping pack CLI update")
+		return nil
 	}
 
-	cmd = exec.Command("chmod", "+x", "/usr/local/bin/pack")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set executable permissions: %v, output: %s", err, output)
+	mitteBinDir := filepath.Join(homeDir, ".mitte", "bin")
+	if err := os.MkdirAll(mitteBinDir, 0755); err != nil {
+		return fmt.Errorf("failed to create mitte bin directory: %w", err)
 	}
+
+	installPath := filepath.Join(mitteBinDir, "pack")
+
+	// Copy the binary
+	data, err := os.ReadFile(packBinary)
+	if err != nil {
+		return fmt.Errorf("failed to read pack binary: %w", err)
+	}
+
+	if err := os.WriteFile(installPath, data, 0755); err != nil {
+		return fmt.Errorf("failed to write pack binary: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "-----> Pack CLI updated to %s\n", installPath)
+	fmt.Fprintln(os.Stderr, "-----> Note: You may need to add ~/.mitte/bin to your PATH")
 
 	// Clean up
 	os.Remove(tmpFile)
@@ -163,12 +181,31 @@ func createDockerfileForBuildpack(buildDir, buildpackID string, envVars map[stri
 	// Create Dockerfile based on buildpack type
 	switch {
 	case strings.Contains(buildpackID, "java"):
-		// Java application
-		dockerfileContent = `FROM eclipse-temurin:17-jre-jammy
+		// Java application - detect build tool and build properly
+		dockerfileContent = `FROM eclipse-temurin:17-jdk-jammy AS builder
 WORKDIR /app
 COPY . .
-# Try to find and run the JAR file
-RUN find . -name "*.jar" -type f | head -1 | xargs -I {} cp {} app.jar
+
+# Detect and run build tool
+RUN if [ -f pom.xml ]; then \
+      echo "Building with Maven..." && \
+      apt-get update && apt-get install -y maven && \
+      mvn clean package -DskipTests && \
+      find . -name "*.jar" -not -path "*/target/dependency/*" | head -1 | xargs -I {} cp {} app.jar; \
+    elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then \
+      echo "Building with Gradle..." && \
+      apt-get update && apt-get install -y gradle && \
+      gradle build -x test && \
+      find . -name "*.jar" -not -path "*/build/libs/*-plain.jar" | head -1 | xargs -I {} cp {} app.jar; \
+    else \
+      echo "No build tool detected, looking for pre-built JAR..." && \
+      find . -name "*.jar" -type f | head -1 | xargs -I {} cp {} app.jar || echo "No JAR file found"; \
+    fi
+
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /app
+COPY --from=builder /app/app.jar .
+RUN if [ ! -f app.jar ]; then echo "No JAR file was built or found" && exit 1; fi
 EXPOSE 8080
 CMD ["java", "-jar", "app.jar"]`
 
@@ -283,149 +320,31 @@ func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branch
 		}
 	}
 
-	// Check if pack CLI is available
-	if _, err := exec.LookPath("pack"); err != nil {
-		return "", fmt.Errorf("pack CLI not found. Buildpack support requires pack CLI.\n" +
-			"Please run 'sudo mitte setup' to install all dependencies, or install pack CLI manually:\n" +
-			"  https://buildpacks.io/docs/tools/pack/")
+	// Try lifecycle builder first (direct buildpack execution)
+	fmt.Fprintln(os.Stderr, "-----> Attempting direct lifecycle build (no pack CLI dependency)...")
+	lifecycleImageTag, lifecycleErr := BuildWithLifecycle(ctx, appName, buildDir, repoPath, branchName, buildpackConfig, envVars)
+	if lifecycleErr == nil {
+		return lifecycleImageTag, nil
 	}
 
-	// Check pack version for compatibility warning
-	if output, err := exec.Command("pack", "--version").Output(); err == nil {
-		version := strings.TrimSpace(string(output))
-		fmt.Fprintf(os.Stderr, "-----> Using pack CLI version: %s\n", version)
-		// Check if version is too old for Docker 29.x
-		if strings.HasPrefix(version, "v0.38.") || strings.HasPrefix(version, "v0.37.") || strings.HasPrefix(version, "v0.36.") {
-			fmt.Fprintln(os.Stderr, "⚠️  Warning: pack CLI version may not be compatible with Docker 29.x")
-			fmt.Fprintln(os.Stderr, "   Consider running 'sudo mitte setup' to update to v0.39.0+")
-		}
-		// Also warn if using v0.39.x with Docker 29.x (known issues)
-		if strings.HasPrefix(version, "v0.39.") {
-			fmt.Fprintln(os.Stderr, "⚠️  Note: pack v0.39.x may have issues with Docker 29.x")
-			fmt.Fprintln(os.Stderr, "   Trying API version fallback...")
-		}
-		// Try to update pack CLI if it's v0.39.x (which has Docker 29.x issues)
-		// Check for any v0.39.x version including custom builds
-		if strings.Contains(version, "0.39.") {
-			fmt.Fprintln(os.Stderr, "-----> Attempting to update pack CLI to v0.40.0 for better Docker 29.x compatibility...")
-			if err := updatePackCLI(); err != nil {
-				fmt.Fprintf(os.Stderr, "-----> Could not update pack CLI: %v\n", err)
-				fmt.Fprintln(os.Stderr, "-----> Continuing with fallback strategies...")
-			} else {
-				fmt.Fprintln(os.Stderr, "-----> Pack CLI updated successfully, retrying...")
-				// Re-check version after update
-				if newOutput, err := exec.Command("pack", "--version").Output(); err == nil {
-					newVersion := strings.TrimSpace(string(newOutput))
-					fmt.Fprintf(os.Stderr, "-----> Now using pack CLI version: %s\n", newVersion)
-				}
-			}
-		}
-	}
+	fmt.Fprintf(os.Stderr, "-----> Lifecycle build failed: %v\n", lifecycleErr)
+	fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile creation...")
 
-	// Use pack CLI to build the application
-	// This is a simpler approach than directly using the lifecycle library
-	fmt.Fprintln(os.Stderr, "-----> Running pack build...")
-
-	cmdArgs := []string{
-		"build",
-		imageTag,
-		"--path", buildDir,
-		"--builder", "paketobuildpacks/builder:base",
-		"--trust-builder",
-		"--verbose",
-	}
-
-	// If a specific buildpack is configured, use it
-	if buildpackConfig.BuildpackID != "" {
-		cmdArgs = append(cmdArgs, "--buildpack", buildpackConfig.BuildpackID)
-	}
-
-	// Try building with pack CLI
-	// For Docker 29.x compatibility, try newer API versions first
-	// Docker 29.x requires API 1.44+, but pack v0.39.1 defaults to 1.42
-	attempts := []struct {
-		envVars []string
-		desc    string
-	}{
-		// Try 1-6: Newer API versions first (Docker 29.x compatibility)
-		{envVars: []string{"DOCKER_API_VERSION=1.50"}, desc: "Docker API 1.50"},
-		{envVars: []string{"DOCKER_API_VERSION=1.49"}, desc: "Docker API 1.49"},
-		{envVars: []string{"DOCKER_API_VERSION=1.48"}, desc: "Docker API 1.48"},
-		{envVars: []string{"DOCKER_API_VERSION=1.47"}, desc: "Docker API 1.47"},
-		{envVars: []string{"DOCKER_API_VERSION=1.46"}, desc: "Docker API 1.46"},
-		{envVars: []string{"DOCKER_API_VERSION=1.45"}, desc: "Docker API 1.45"},
-		{envVars: []string{"DOCKER_API_VERSION=1.44"}, desc: "Docker API 1.44"},
-		// Try 8: Let pack use API version negotiation (v0.39.0+ feature) as last resort
-		{envVars: []string{}, desc: "API version negotiation"},
-	}
-
-	var lastErr error
-
-	for _, attempt := range attempts {
-		cmd := exec.CommandContext(ctx, "pack", cmdArgs...)
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
-
-		// Set environment variables for this attempt
-		env := os.Environ()
-		env = append(env, attempt.envVars...)
-		cmd.Env = env
-
-		fmt.Fprintf(os.Stderr, "-----> Building with %s...\n", attempt.desc)
-
-		if err := cmd.Run(); err == nil {
-			// Success!
-			fmt.Fprintf(os.Stderr, "\n-----> Successfully built image %s with buildpacks\n", imageTag)
-			return imageTag, nil
-		} else {
-			lastErr = err
-			// Check if error is due to API version mismatch
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				errOutput := string(exitErr.Stderr)
-				fmt.Fprintf(os.Stderr, "-----> Pack build attempt failed: %s\n", errOutput)
-				if strings.Contains(errOutput, "client version") && strings.Contains(errOutput, "is too old") {
-					// Try next API version
-					fmt.Fprintf(os.Stderr, "-----> API version too old, trying next...\n")
-					continue
-				}
-			}
-			// Other error, return it
-			return "", fmt.Errorf("pack build failed: %w", err)
-		}
-	}
-
-	// If we get here, all attempts failed
-	fmt.Fprintln(os.Stderr, "-----> All pack build attempts failed, trying fallback strategies...")
-
-	// Try to build with Docker directly as a fallback
-	// This requires a Dockerfile, so check if one exists or create one
-	dockerfilePath := filepath.Join(buildDir, "Dockerfile")
-	if _, err := os.Stat(dockerfilePath); err == nil {
-		fmt.Fprintln(os.Stderr, "-----> Found Dockerfile, trying Docker builder...")
-		// Use the Docker builder as fallback
-		dockerImageTag, err := BuildImage(ctx, appName, buildDir, repoPath, branchName, envVars)
-		if err != nil {
-			return "", fmt.Errorf("both pack build and Docker builder failed. Last pack error: %w", lastErr)
-		}
-		return dockerImageTag, nil
-	}
-
-	// No Dockerfile found, try to create one based on detected buildpack
-	fmt.Fprintln(os.Stderr, "-----> No Dockerfile found, attempting to create one...")
+	// Create Dockerfile based on detected buildpack
 	if buildpackConfig != nil {
 		if err := createDockerfileForBuildpack(buildDir, buildpackConfig.BuildpackID, envVars); err != nil {
 			fmt.Fprintf(os.Stderr, "-----> Could not create Dockerfile: %v\n", err)
-			return "", fmt.Errorf("pack build failed and could not create Dockerfile fallback: %w", lastErr)
+			return "", fmt.Errorf("failed to create Dockerfile from buildpack: %w", err)
 		}
 
-		// Try Docker builder with the created Dockerfile
-		fmt.Fprintln(os.Stderr, "-----> Created Dockerfile, trying Docker builder...")
+		// Use Docker builder with the created Dockerfile
+		fmt.Fprintln(os.Stderr, "-----> Created Dockerfile, using Docker builder...")
 		dockerImageTag, err := BuildImage(ctx, appName, buildDir, repoPath, branchName, envVars)
 		if err != nil {
-			return "", fmt.Errorf("pack build failed and Docker builder with created Dockerfile also failed: %w", lastErr)
+			return "", fmt.Errorf("Docker builder with created Dockerfile failed: %w", err)
 		}
 		return dockerImageTag, nil
 	}
 
-	return "", fmt.Errorf("pack build failed after trying all Docker API compatibility options: %w", lastErr)
+	return "", fmt.Errorf("no buildpack configuration available")
 }
