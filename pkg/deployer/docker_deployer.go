@@ -109,7 +109,16 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 		exposedPorts, err := getExposedPorts(ctx, cli, imageTag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not inspect image ports: %v\n", err)
-		} else if len(exposedPorts) > 0 {
+		}
+
+		// If no ports are exposed, default to 8080 for CNB/web applications
+		if len(exposedPorts) == 0 {
+			fmt.Fprintf(os.Stderr, "-----> No exposed ports found, defaulting to port 8080 for web applications\n")
+			defaultPort, _ := nat.NewPort("tcp", "8080")
+			exposedPorts = []nat.Port{defaultPort}
+		}
+
+		if len(exposedPorts) > 0 {
 			fmt.Fprintf(os.Stderr, "-----> Auto-binding exposed ports: %v\n", exposedPorts)
 
 			// Try to use previously assigned port if available
