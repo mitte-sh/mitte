@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ type BuildpackConfig struct {
 	BuildpackID  string
 	BuildpackURI string
 	EnvVars      map[string]string
+	JavaVersion  string // Java version detected from pom.xml (e.g., "17", "21")
 }
 
 // DetectBuildpack attempts to detect which buildpack should be used for the given app directory
@@ -46,9 +48,20 @@ func DetectBuildpack(appDir string) (*BuildpackConfig, error) {
 
 	// Java detection
 	if hasFile(appDir, "pom.xml") || hasFile(appDir, "build.gradle") || hasFile(appDir, "build.gradle.kts") {
+		javaVersion := "17" // default
+		if hasFile(appDir, "pom.xml") {
+			// Detect Java version from pom.xml
+			pomPath := filepath.Join(appDir, "pom.xml")
+			detectedVersion := DetectJavaVersionFromPom(pomPath)
+			if detectedVersion != "" {
+				javaVersion = detectedVersion
+			}
+		}
+
 		return &BuildpackConfig{
 			BuildpackID:  "paketo-buildpacks/java",
 			BuildpackURI: "docker://paketobuildpacks/java:latest",
+			JavaVersion:  javaVersion,
 		}, nil
 	}
 
@@ -91,6 +104,31 @@ func hasFile(dir, pattern string) bool {
 	// Check for exact file match
 	_, err := os.Stat(filepath.Join(dir, pattern))
 	return !os.IsNotExist(err)
+}
+
+// DetectJavaVersionFromPom extracts the Java version from pom.xml
+func DetectJavaVersionFromPom(pomPath string) string {
+	// Default to Java 17 if detection fails
+	defaultVersion := "17"
+
+	// Read the pom.xml file
+	content, err := os.ReadFile(pomPath)
+	if err != nil {
+		return defaultVersion
+	}
+
+	// Use regex to find <java.version> tag
+	re := regexp.MustCompile(`<java\.version>([^<]+)</java\.version>`)
+	matches := re.FindStringSubmatch(string(content))
+	if len(matches) > 1 {
+		version := strings.TrimSpace(matches[1])
+		// Validate that it's a reasonable version number
+		if version != "" && len(version) <= 3 {
+			return version
+		}
+	}
+
+	return defaultVersion
 }
 
 // updatePackCLI attempts to update pack CLI to latest version for better Docker 29.x compatibility
