@@ -389,6 +389,9 @@ CMD ["java", "-jar", "app.jar"]
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
+# Install build dependencies for CGO
+RUN apk add --no-cache gcc musl-dev
+
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
 RUN go mod download
@@ -396,8 +399,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN go build -o main .
+# Build the application with CGO enabled (required for SQLite)
+RUN CGO_ENABLED=1 go build -o main .
 
 # Runtime stage
 FROM alpine:latest
