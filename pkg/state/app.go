@@ -21,6 +21,8 @@ type App struct {
 	Buildpack     string            `json:"buildpack,omitempty"`      // Buildpack to use (CNB)
 	BuildpackEnv  map[string]string `json:"buildpack_env,omitempty"`  // Buildpack-specific env vars
 	HostPort      string            `json:"host_port,omitempty"`      // Current host port for routing
+	Command       []string          `json:"command,omitempty"`        // Custom entrypoint/command
+	User          string            `json:"user,omitempty"`           // Custom user to run as
 }
 
 func Load(appName string) (*App, error) {
@@ -38,6 +40,7 @@ func Load(appName string) (*App, error) {
 			Buildpack:     "",
 			BuildpackEnv:  make(map[string]string),
 			HostPort:      "",
+			Command:       []string{},
 		}, nil
 	}
 

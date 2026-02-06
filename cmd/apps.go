@@ -144,6 +144,26 @@ var appsDetectBuildpackCmd = &cobra.Command{
 	Run:   runAppsDetectBuildpack,
 }
 
+var appsSetCommandCmd = &cobra.Command{
+	Use:   "set-command <app-name> <command>...",
+	Short: "Set the custom command/entrypoint for an application",
+	Long: `Set the custom command or entrypoint arguments for an application.
+This is equivalent to the command passed at the end of 'docker run'.
+Example: mitte apps set-command myapp serve --port 8080`,
+	Args: cobra.MinimumNArgs(2),
+	Run:  runAppsSetCommand,
+}
+
+var appsSetUserCmd = &cobra.Command{
+	Use:   "set-user <app-name> <user>",
+	Short: "Set the custom user to run the application",
+	Long: `Set the custom user (UID:GID or username) to run the application.
+This is equivalent to the -u flag in 'docker run'.
+Example: mitte apps set-user myapp 1000:1000`,
+	Args: cobra.ExactArgs(2),
+	Run:  runAppsSetUser,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
@@ -155,6 +175,8 @@ func init() {
 	appsCmd.AddCommand(appsDeployImageCmd)
 	appsCmd.AddCommand(appsSetBuildpackCmd)
 	appsCmd.AddCommand(appsDetectBuildpackCmd)
+	appsCmd.AddCommand(appsSetCommandCmd)
+	appsCmd.AddCommand(appsSetUserCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -272,7 +294,7 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 
 	// --- 4. Deploy the placeholder image ---
 	fmt.Fprintln(os.Stderr, "Deploying placeholder application...")
-	deployResult, err := deployer.Deploy(context.Background(), appName, placeholderImage, []string{}, []string{}, "")
+	deployResult, err := deployer.Deploy(context.Background(), appName, placeholderImage, []string{}, []string{}, "", []string{}, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Could not deploy placeholder: %v\n", err)
 		os.Exit(1)
@@ -461,7 +483,7 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 
 	// 8. Deploy the new image
 	fmt.Fprintf(os.Stderr, "-----> Deploying new image...\n")
-	deployResult, err := deployer.Deploy(ctx, appName, imageTag, app.Volumes, app.Ports, app.ContainerName)
+	deployResult, err := deployer.Deploy(ctx, appName, imageTag, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
 		os.Exit(1)
@@ -756,7 +778,7 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 
 	// 4. Deploy the image
 	fmt.Fprintf(os.Stderr, "-----> Deploying container...\n")
-	deployResult, err := deployer.Deploy(ctx, appName, app.Image, app.Volumes, app.Ports, app.ContainerName)
+	deployResult, err := deployer.Deploy(ctx, appName, app.Image, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
 		os.Exit(1)
@@ -904,4 +926,72 @@ func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 	fmt.Printf("Buildpack URI: %s\n", buildpackConfig.BuildpackURI)
 	fmt.Printf("\nTo use this buildpack, run:\n")
 	fmt.Printf("  mitte apps set-buildpack %s %s\n", appName, buildpackConfig.BuildpackID)
+}
+
+func runAppsSetCommand(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	commandArgs := args[1:]
+
+	fmt.Fprintf(os.Stderr, "Setting command for app '%s' to '%s'... ", appName, strings.Join(commandArgs, " "))
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Set the command
+	app.Command = commandArgs
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured to use command: %s\n", appName, strings.Join(commandArgs, " "))
+	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+}
+
+func runAppsSetUser(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	user := args[1]
+
+	fmt.Fprintf(os.Stderr, "Setting user for app '%s' to '%s'... ", appName, user)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Set the user
+	app.User = user
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured to run as user: %s\n", appName, user)
+	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
 }

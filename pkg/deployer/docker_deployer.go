@@ -25,7 +25,7 @@ type DeployResult struct {
 // Deploy creates and starts a new container for the given app and image.
 // It also stops and removes any previous container for that app.
 // It returns the new container's ID and its published host port.
-func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string, containerName string) (*DeployResult, error) {
+func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string, containerName string, command []string, user string) (*DeployResult, error) {
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -161,6 +161,8 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	containerConfig := &container.Config{
 		Image: imageTag,
 		Env:   envVars,
+		Cmd:   command,
+		User:  user,
 	}
 
 	hostConfig := &container.HostConfig{

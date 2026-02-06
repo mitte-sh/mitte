@@ -243,7 +243,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 
 	// --- 6. Deploy the new image ---
 	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
-	deployResult, err := deployer.Deploy(context.Background(), appName, imageTag, appState.Volumes, appState.Ports, appState.ContainerName)
+	deployResult, err := deployer.Deploy(context.Background(), appName, imageTag, appState.Volumes, appState.Ports, appState.ContainerName, appState.Command, appState.User)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n!! Deployment failed: %v\n", err)
 		os.Exit(1)

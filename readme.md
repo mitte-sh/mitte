@@ -110,6 +110,12 @@ ssh root@your-server.com "mitte apps set-volumes my-image-app /host/path:/contai
 # Configure ports (optional)
 ssh root@your-server.com "mitte apps set-ports my-image-app 8080:80"
 
+# Configure custom command (optional)
+ssh root@your-server.com "mitte apps set-command my-image-app serve"
+
+# Configure custom user (optional)
+ssh root@your-server.com "mitte apps set-user my-image-app 1000:1000"
+
 # Deploy the image
 ssh root@your-server.com "mitte apps deploy-image my-image-app"
 ```
@@ -190,6 +196,12 @@ mitte apps set-volumes <appname> /host/path:/container/path
 
 # Configure port mappings for an app
 mitte apps set-ports <appname> 8080:80
+
+# Configure a custom command/entrypoint for an app
+mitte apps set-command <appname> serve --port 8080
+
+# Configure a custom user (UID:GID) to run the container
+mitte apps set-user <appname> 1000:1000
 
 # Deploy a pre-built image (after configuration)
 mitte apps deploy-image <appname>
