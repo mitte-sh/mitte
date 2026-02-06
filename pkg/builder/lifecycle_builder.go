@@ -226,6 +226,21 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 				{Name: "jvm-application"},
 			},
 		})
+	} else if hasFile(appDir, "Gemfile") {
+		// Check for Ruby buildpack (Rails apps often have both Gemfile and package.json)
+		fmt.Fprintln(os.Stderr, "-----> Detected Ruby application")
+		groupElements = append(groupElements, buildpack.GroupElement{
+			ID:      "paketo-buildpacks/ruby",
+			Version: "latest",
+		})
+		planEntries = append(planEntries, files.BuildPlanEntry{
+			Providers: []buildpack.GroupElement{
+				{ID: "paketo-buildpacks/ruby", Version: "latest"},
+			},
+			Requires: []buildpack.Require{
+				{Name: "ruby"},
+			},
+		})
 	} else if hasFile(appDir, "package.json") {
 		// Check for Node.js buildpack
 		fmt.Fprintln(os.Stderr, "-----> Detected Node.js application")
@@ -416,6 +431,98 @@ EXPOSE 8080
 CMD ["./main"]
 `
 
+	case strings.Contains(buildpackConfig.BuildpackID, "nodejs"):
+		// Node.js application handling
+		nodePort := buildpackConfig.NodePort
+		if nodePort == "" {
+			nodePort = "3000" // fallback
+		}
+
+		// Check if package-lock.json exists to decide between npm ci and npm install
+		installCmd := "npm install --only=production"
+		packageLockPath := filepath.Join(buildDir, "package-lock.json")
+		if _, err := os.Stat(packageLockPath); err == nil {
+			installCmd = "npm ci --only=production"
+		}
+
+		dockerfileContent = fmt.Sprintf(`# Node.js application
+FROM node:18-alpine
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY package*.json ./
+
+# Install dependencies
+RUN %s
+
+# Copy application code
+COPY . .
+
+# Expose the port the app runs on
+EXPOSE %s
+
+# Run the application
+CMD ["npm", "start"]
+`, installCmd, nodePort)
+
+	case strings.Contains(buildpackConfig.BuildpackID, "ruby"):
+		// Ruby application handling
+		rubyVersion := buildpackConfig.RubyVersion
+		if rubyVersion == "" {
+			rubyVersion = "3.2" // fallback
+		}
+
+		// Force upgrade old Ruby versions that don't have compatible Docker images
+		if strings.HasPrefix(rubyVersion, "2.3.") || strings.HasPrefix(rubyVersion, "2.4.") ||
+			strings.HasPrefix(rubyVersion, "2.5.") || strings.HasPrefix(rubyVersion, "2.6.") {
+			rubyVersion = "2.7" // Use Ruby 2.7 LTS for old apps
+		}
+
+		dockerfileContent = fmt.Sprintf(`# Ruby application
+FROM ruby:%s-slim
+WORKDIR /app
+
+# Install system dependencies for Ruby gems
+RUN apt-get update -qq && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    nodejs \
+    npm \
+    libsqlite3-dev \
+    libssl-dev \
+    zlib1g-dev \
+    libreadline-dev \
+    libyaml-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Gemfile first for better caching
+COPY Gemfile* ./
+
+# Update Ruby version in Gemfile if it was upgraded for compatibility
+RUN sed -i "s/ruby '2\.3\.0'/ruby '~> 2.7'/g; s/ruby \"2\.3\.0\"/ruby \"~> 2.7\"/g" Gemfile
+
+# Install specific Bundler version if Gemfile.lock exists and specifies one
+RUN if [ -f Gemfile.lock ]; then \
+      BUNDLER_VERSION=$(grep -A 1 "BUNDLED WITH" Gemfile.lock | tail -1 | sed 's/^[[:space:]]*//') && \
+      if [ ! -z "$BUNDLER_VERSION" ]; then \
+        gem install bundler -v "$BUNDLER_VERSION"; \
+      fi; \
+    fi
+
+# Update puma to a version compatible with Ruby 2.7, then install dependencies
+RUN gem install puma -v '4.3.12' && bundle install
+
+# Copy application code
+COPY . .
+
+# Expose the port the app runs on (Rails default)
+EXPOSE 3000
+
+# Run the application
+CMD ["bundle", "exec", "rails", "server", "-b", "0.0.0.0"]`, rubyVersion)
+
 	default:
 		// Fallback for other applications (Node.js, etc.)
 		dockerfileContent = fmt.Sprintf(`FROM paketobuildpacks/run:base-cnb
@@ -525,6 +632,69 @@ echo 'CNB lifecycle completed successfully!'"]
 		})
 		if err != nil {
 			return files.Report{}, fmt.Errorf("failed to walk Go project directory: %w", err)
+		}
+
+	case strings.Contains(buildpackConfig.BuildpackID, "nodejs"):
+		// Add Node.js specific files (only if they exist)
+		nodejsFiles := []string{"package.json", "package-lock.json", "yarn.lock", ".npmrc"}
+		for _, file := range nodejsFiles {
+			filePath := filepath.Join(buildDir, file)
+			if _, err := os.Stat(filePath); err == nil {
+				filesToInclude = append(filesToInclude, file)
+			}
+		}
+
+		// Add all source files (excluding node_modules and common exclusions)
+		err = filepath.Walk(buildDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				relPath, _ := filepath.Rel(buildDir, path)
+				// Include all files except common exclusions
+				if relPath != "Dockerfile" &&
+					!strings.Contains(relPath, "node_modules/") &&
+					!strings.HasPrefix(relPath, ".git/") &&
+					relPath != ".gitignore" &&
+					relPath != "README.md" { // Add more exclusions as needed
+					filesToInclude = append(filesToInclude, relPath)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return files.Report{}, fmt.Errorf("failed to walk Node.js project directory: %w", err)
+		}
+
+	case strings.Contains(buildpackConfig.BuildpackID, "ruby"):
+		// Add Ruby specific files (only if they exist)
+		rubyFiles := []string{"Gemfile", "Gemfile.lock"}
+		for _, file := range rubyFiles {
+			filePath := filepath.Join(buildDir, file)
+			if _, err := os.Stat(filePath); err == nil {
+				filesToInclude = append(filesToInclude, file)
+			}
+		}
+
+		// Add all source files (excluding common exclusions)
+		err = filepath.Walk(buildDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				relPath, _ := filepath.Rel(buildDir, path)
+				// Include all files except common exclusions
+				if relPath != "Dockerfile" &&
+					!strings.HasPrefix(relPath, ".git/") &&
+					relPath != ".gitignore" &&
+					relPath != "README.md" { // Add more exclusions as needed
+					filesToInclude = append(filesToInclude, relPath)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return files.Report{}, fmt.Errorf("failed to walk Ruby project directory: %w", err)
 		}
 	}
 

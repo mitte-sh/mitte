@@ -16,17 +16,41 @@ type BuildpackConfig struct {
 	BuildpackURI string
 	EnvVars      map[string]string
 	JavaVersion  string // Java version detected from pom.xml (e.g., "17", "21")
+	NodePort     string // Node.js port detected from package.json (e.g., "3000")
+	RubyVersion  string // Ruby version detected from Gemfile (e.g., "2.3.0", "3.2.0")
 }
 
 // DetectBuildpack attempts to detect which buildpack should be used for the given app directory
 func DetectBuildpack(appDir string) (*BuildpackConfig, error) {
 	// Check for common buildpack indicators
 
+	// Ruby detection (check first for Rails apps that may also have package.json)
+	if hasFile(appDir, "Gemfile") {
+		rubyVersion := "3.2" // default
+		gemfilePath := filepath.Join(appDir, "Gemfile")
+		if detectedVersion := DetectRubyVersion(gemfilePath); detectedVersion != "" {
+			rubyVersion = detectedVersion
+		}
+
+		return &BuildpackConfig{
+			BuildpackID:  "paketo-buildpacks/ruby",
+			BuildpackURI: "docker://paketobuildpacks/ruby:latest",
+			RubyVersion:  rubyVersion,
+		}, nil
+	}
+
 	// Node.js detection
 	if hasFile(appDir, "package.json") {
+		nodePort := "3000" // default
+		packageJsonPath := filepath.Join(appDir, "package.json")
+		if detectedPort := DetectNodeJSPort(packageJsonPath); detectedPort != "" {
+			nodePort = detectedPort
+		}
+
 		return &BuildpackConfig{
 			BuildpackID:  "paketo-buildpacks/nodejs",
 			BuildpackURI: "docker://paketobuildpacks/nodejs:latest",
+			NodePort:     nodePort,
 		}, nil
 	}
 
@@ -73,14 +97,6 @@ func DetectBuildpack(appDir string) (*BuildpackConfig, error) {
 		}, nil
 	}
 
-	// Ruby detection
-	if hasFile(appDir, "Gemfile") {
-		return &BuildpackConfig{
-			BuildpackID:  "paketo-buildpacks/ruby",
-			BuildpackURI: "docker://paketobuildpacks/ruby:latest",
-		}, nil
-	}
-
 	// PHP detection
 	if hasFile(appDir, "composer.json") {
 		return &BuildpackConfig{
@@ -124,6 +140,64 @@ func DetectJavaVersionFromPom(pomPath string) string {
 		version := strings.TrimSpace(matches[1])
 		// Validate that it's a reasonable version number
 		if version != "" && len(version) <= 3 {
+			return version
+		}
+	}
+
+	return defaultVersion
+}
+
+// DetectNodeJSPort extracts the port from package.json or returns default
+func DetectNodeJSPort(packageJsonPath string) string {
+	// Default Node.js port
+	defaultPort := "3000"
+
+	// Read the package.json file
+	content, err := os.ReadFile(packageJsonPath)
+	if err != nil {
+		return defaultPort
+	}
+
+	// Simple port detection - look for PORT= in scripts or environment
+	contentStr := string(content)
+
+	// Check for PORT environment variable in scripts
+	portRegex := regexp.MustCompile(`PORT=(\d+)`)
+	matches := portRegex.FindStringSubmatch(contentStr)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+
+	// Could add more sophisticated detection here
+	// For now, return default
+	return defaultPort
+}
+
+// DetectRubyVersion extracts the Ruby version from Gemfile
+func DetectRubyVersion(gemfilePath string) string {
+	// Default to latest Ruby version if detection fails
+	defaultVersion := "3.2"
+
+	// Read the Gemfile
+	content, err := os.ReadFile(gemfilePath)
+	if err != nil {
+		return defaultVersion
+	}
+
+	// Use regex to find ruby directive
+	// Matches: ruby '2.3.0', ruby "2.3.0", ruby('2.3.0'), etc.
+	re := regexp.MustCompile(`ruby\s*[\('"]\s*([^'"\)\s]+)`)
+	matches := re.FindStringSubmatch(string(content))
+	if len(matches) > 1 {
+		version := strings.TrimSpace(matches[1])
+		// Validate that it's a reasonable version number (X.Y.Z format)
+		if version != "" && len(version) >= 3 && strings.Count(version, ".") >= 1 {
+			// Ruby versions before 2.7 don't have reliable slim images
+			// Upgrade old versions to minimum supported LTS
+			if strings.HasPrefix(version, "2.3.") || strings.HasPrefix(version, "2.4.") ||
+				strings.HasPrefix(version, "2.5.") || strings.HasPrefix(version, "2.6.") {
+				return "2.7" // LTS version with reliable slim images
+			}
 			return version
 		}
 	}
