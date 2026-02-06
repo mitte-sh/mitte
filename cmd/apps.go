@@ -130,6 +130,20 @@ Examples:
 	Run:  runAppsDeployImage,
 }
 
+var appsSetBuildpackCmd = &cobra.Command{
+	Use:   "set-buildpack <app-name> <buildpack-id>",
+	Short: "Set the buildpack to use for an application",
+	Args:  cobra.ExactArgs(2),
+	Run:   runAppsSetBuildpack,
+}
+
+var appsDetectBuildpackCmd = &cobra.Command{
+	Use:   "detect-buildpack <app-name>",
+	Short: "Detect and suggest a buildpack for an application",
+	Args:  cobra.ExactArgs(1),
+	Run:   runAppsDetectBuildpack,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
@@ -139,6 +153,8 @@ func init() {
 	appsCmd.AddCommand(appsSetVolumesCmd)
 	appsCmd.AddCommand(appsSetPortsCmd)
 	appsCmd.AddCommand(appsDeployImageCmd)
+	appsCmd.AddCommand(appsSetBuildpackCmd)
+	appsCmd.AddCommand(appsDetectBuildpackCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -260,6 +276,12 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Could not deploy placeholder: %v\n", err)
 		os.Exit(1)
+	}
+
+	// --- 4.5. Save host port to app state ---
+	app.HostPort = deployResult.HostPort
+	if err = app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save host port: %v\n", err)
 	}
 
 	// --- 5. Route traffic ---
@@ -445,7 +467,13 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 9. Update routes
+	// 9. Save host port to app state
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
+	}
+
+	// 10. Update routes
 	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
 	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
@@ -734,6 +762,12 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// 4.5. Save host port to app state
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
+	}
+
 	// 5. Update routes
 	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
 	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
@@ -747,4 +781,127 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	if len(app.Domains) > 0 {
 		fmt.Printf("URL: http://%s\n", app.Domains[0])
 	}
+}
+
+func runAppsSetBuildpack(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	buildpackID := args[1]
+
+	// Validate buildpack ID
+	if buildpackID == "" {
+		fmt.Fprintf(os.Stderr, "Error: Buildpack ID cannot be empty\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Setting buildpack for app '%s' to '%s'... ", appName, buildpackID)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// Set the buildpack
+	app.Buildpack = buildpackID
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	fmt.Printf("Success! App '%s' is now configured to use buildpack '%s'\n", appName, buildpackID)
+	fmt.Println("The next git push will use this buildpack for building.")
+}
+
+func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
+	appName := args[0]
+
+	fmt.Fprintf(os.Stderr, "Detecting buildpack for app '%s'...\n", appName)
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		os.Exit(1)
+	}
+
+	// For detection, we need to check out the latest code
+	// This is similar to what we do in git_receive.go
+
+	// Get the repo path
+	repoPath := filepath.Join("/var/lib/mitte/repos", appName+".git")
+
+	// Check if repo exists
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: Repository for app '%s' does not exist. Push code first with 'git push mitte main'\n", appName)
+		os.Exit(1)
+	}
+
+	// Determine the branch to check
+	getBranchCmd := exec.Command("sh", "-c", "git for-each-ref --sort=-committerdate refs/heads/ --format='%(refname:short)' | head -n 1")
+	getBranchCmd.Dir = repoPath
+	branchOutput, err := getBranchCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not determine branch: %v\n%s", err, string(branchOutput))
+		os.Exit(1)
+	}
+	branchName := strings.TrimSpace(string(branchOutput))
+
+	if branchName == "" {
+		fmt.Fprintf(os.Stderr, "Error: No branches found in repository\n")
+		os.Exit(1)
+	}
+
+	// Create temporary directory to check out code
+	buildDir, err := os.MkdirTemp("", "mitte-detect-"+appName+"-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to create temporary directory: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(buildDir)
+
+	// Archive and extract the code
+	archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchName, buildDir)
+	archiveCmd := exec.Command("sh", "-c", archiveCmdString)
+	archiveCmd.Dir = repoPath
+	archiveOutput, err := archiveCmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to extract code: %v\n%s", err, string(archiveOutput))
+		os.Exit(1)
+	}
+
+	// Detect buildpack
+	buildpackConfig, err := builder.DetectBuildpack(buildDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "No buildpack detected for app '%s': %v\n", appName, err)
+		fmt.Fprintf(os.Stderr, "\nTo configure a buildpack manually, run:\n")
+		fmt.Fprintf(os.Stderr, "  mitte apps set-buildpack %s <buildpack-id>\n", appName)
+		fmt.Fprintf(os.Stderr, "\nCommon buildpack IDs:\n")
+		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/nodejs\n")
+		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/python\n")
+		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/go\n")
+		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/java\n")
+		os.Exit(1)
+	}
+
+	fmt.Printf("Detected buildpack for app '%s': %s\n", appName, buildpackConfig.BuildpackID)
+	fmt.Printf("Buildpack URI: %s\n", buildpackConfig.BuildpackURI)
+	fmt.Printf("\nTo use this buildpack, run:\n")
+	fmt.Printf("  mitte apps set-buildpack %s %s\n", appName, buildpackConfig.BuildpackID)
 }

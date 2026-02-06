@@ -1,0 +1,17 @@
+[apis]
+[apis.buildpack]
+  deprecated = []
+  supported = ["0.7", "0.8", "0.9", "0.10"]
+[apis.platform]
+  deprecated = []
+  supported = ["0.7", "0.8", "0.9", "0.10", "0.11", "0.12", "0.13"]
+
+# For backwards compatibility the minimum supported APIs are provided in RFC-0011 format
+# https://github.com/buildpacks/rfcs/blob/main/text/0011-lifecycle-descriptor.md
+[api]
+  platform = "0.7"
+  buildpack = "0.7"
+
+[lifecycle]
+  version = "0.19.0"
+  sbom-formats = ["application/vnd.cyclonedx+json", "application/spdx+json", "application/vnd.syft+json"]

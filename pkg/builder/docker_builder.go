@@ -36,10 +36,53 @@ type StreamLine struct {
 // It returns the unique image tag and any error that occurred.
 func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchName string, envVars map[string]string) (string, error) {
 	fmt.Fprintln(os.Stderr, "-----> Connecting to Docker daemon...")
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return "", fmt.Errorf("failed to create docker client: %w", err)
+
+	// Try different API versions for Docker 29.x compatibility
+	// Docker 29.x requires API 1.44+, but SDK might default to 1.42
+	apiVersions := []string{"1.50", "1.49", "1.48", "1.47", "1.46", "1.45", "1.44", ""}
+
+	var cli *client.Client
+	var lastErr error
+
+	for _, apiVersion := range apiVersions {
+		fmt.Fprintf(os.Stderr, "-----> Trying Docker API version: %s\n", apiVersion)
+
+		var opts []client.Opt
+		opts = append(opts, client.FromEnv)
+
+		if apiVersion == "" {
+			// Try version negotiation as last resort
+			opts = append(opts, client.WithAPIVersionNegotiation())
+		} else {
+			opts = append(opts, client.WithVersion(apiVersion))
+		}
+
+		var err error
+		cli, err = client.NewClientWithOpts(opts...)
+		if err != nil {
+			lastErr = err
+			fmt.Fprintf(os.Stderr, "-----> Failed with API %s: %v\n", apiVersion, err)
+			continue
+		}
+
+		// Test the connection
+		_, err = cli.Ping(ctx)
+		if err != nil {
+			lastErr = err
+			cli.Close()
+			fmt.Fprintf(os.Stderr, "-----> Ping failed with API %s: %v\n", apiVersion, err)
+			continue
+		}
+
+		// Success!
+		fmt.Fprintf(os.Stderr, "-----> Connected with Docker API version: %s\n", apiVersion)
+		break
 	}
+
+	if cli == nil {
+		return "", fmt.Errorf("failed to create docker client with any API version: %w", lastErr)
+	}
+
 	defer cli.Close()
 
 	// --- 1. Get the Git SHA for tagging ---

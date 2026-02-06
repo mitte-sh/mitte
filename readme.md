@@ -10,20 +10,30 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 *   📦 **Single Go Binary**: Incredibly easy to install and manage. No complex dependency chains.
 *   🔒 **Automatic HTTPS**: Caddy provides free, managed SSL certificates for all your apps, out-of-the-box.
 *   🏗️ **Dockerfile Support**: Automatically builds your application using your existing `Dockerfile`.
+*   📦 **Buildpack Support**: Deploy applications without Dockerfiles using Cloud Native Buildpacks (CNB) for automatic language detection and building.
 *   🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
 *   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
 *   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
 *   🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
+*   🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
+*   🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
 
 ### How It Works
 
-Mitte listens for `git push` commands over SSH. When it receives a push for an app, it follows one of two deployment paths:
+Mitte listens for `git push` commands over SSH. When it receives a push for an app, it follows one of three deployment paths based on configuration priority:
 
-#### Source Code Deployment (Default)
+#### Source Code Deployment with Dockerfile (Default)
 1.  **Receives** the source code in a bare git repository.
-2.  **Builds** the code into a Docker image using a `Dockerfile`.
+2.  **Builds** the code into a Docker image using your `Dockerfile`.
 3.  **Runs** the image as a new container.
 4.  **Routes** traffic to the new container by dynamically updating its Caddy reverse proxy via Caddy's admin API.
+
+#### Source Code Deployment with Buildpacks
+1.  **Receives** the source code in a bare git repository.
+2.  **Detects** the application language and framework automatically.
+3.  **Builds** the application using Cloud Native Buildpacks (CNB) without requiring a `Dockerfile`.
+4.  **Runs** the built image as a new container.
+5.  **Routes** traffic to the new container.
 
 #### Pre-built Image Deployment
 1.  **Receives** the git push (for triggering deployment).
@@ -71,8 +81,9 @@ git push mitte main
 
 **That's it!** Your application is now deployed at `http://my-awesome-app.your-server.com`.
 
-> **Note**: Mitte supports two deployment modes:
-> - **Source Code**: Push your code and let Mitte build it automatically
+> **Note**: Mitte supports three deployment modes:
+> - **Source Code with Dockerfile**: Push your code with a `Dockerfile` and let Mitte build it automatically
+> - **Source Code with Buildpacks**: Push your code and let Mitte detect your language and build using Cloud Native Buildpacks
 > - **Pre-built Images**: Configure a Docker image and deploy it directly (see the Pre-built Images section below)
 
 ### 🐳 Deploying Pre-built Images
@@ -116,6 +127,46 @@ git push mitte main
 
 The system will detect the pre-built image configuration and deploy it directly without building.
 
+### 📦 Deploying with Buildpacks
+
+Mitte supports deploying applications using Cloud Native Buildpacks (CNB), which automatically detect your application's language and framework, eliminating the need for a `Dockerfile`. This is perfect for standard applications in popular languages.
+
+**Note**: Buildpack support requires the `pack` CLI (v0.39.0 or later) to be installed on your server. The `mitte setup` command automatically installs the latest compatible version. If you're using Docker 29.x or later, you need pack v0.39.0+ for Docker API compatibility.
+
+**1. Configure Buildpack for Your App**
+
+```bash
+# Create the app
+ssh root@your-server.com "mitte apps create my-buildpack-app"
+
+# Set a specific buildpack (optional - auto-detection will be used if not set)
+ssh root@your-server.com "mitte apps set-buildpack my-buildpack-app paketobuildpacks/nodejs"
+
+# Configure environment variables (optional)
+ssh root@your-server.com "mitte config set my-buildpack-app NODE_ENV=production"
+```
+
+**2. Deploy via Git Push**
+
+```bash
+# In your project directory
+git remote add mitte mitte@your-server.com:my-buildpack-app
+git push mitte main
+```
+
+Mitte will automatically detect your application type based on files like `package.json`, `requirements.txt`, `go.mod`, etc., and build it using the appropriate buildpack.
+
+**3. Supported Languages and Frameworks**
+
+Mitte can automatically detect and build applications in:
+- **Node.js** (`package.json`)
+- **Python** (`requirements.txt`, `Pipfile`, `pyproject.toml`)
+- **Go** (`go.mod`, `go.sum`, `main.go`)
+- **Java** (`pom.xml`, `build.gradle`, `build.gradle.kts`)
+- **.NET** (`*.csproj`, `*.fsproj`, `project.json`)
+- **Ruby** (`Gemfile`)
+- **PHP** (`composer.json`)
+
 ### 📖 Command Reference
 
 Mitte comes with a powerful command-line interface to manage all aspects of your applications. All commands are run on your server (e.g., by running `ssh root@your-server.com "mitte <command>"`).
@@ -142,6 +193,12 @@ mitte apps set-ports <appname> 8080:80
 
 # Deploy a pre-built image (after configuration)
 mitte apps deploy-image <appname>
+
+# Set the buildpack to use for an app
+mitte apps set-buildpack <appname> <buildpack-id>
+
+# Detect and suggest a buildpack for an application
+mitte apps detect-buildpack <appname>
 
 # Permanently destroy an application and all its resources
 mitte apps destroy <appname>
@@ -411,6 +468,56 @@ mitte setup
 # Add a git remote to your local project (run on your local machine)
 # Replaces 'git remote add ...'
 mitte remote --host your-server.com --app my-awesome-app
+```
+
+### 🛠️ Troubleshooting
+
+#### Caddy "Connection Refused" Errors After Docker Restart
+
+If you see errors like `dial tcp 127.0.0.1:33188: connect: connection refused` in Caddy logs after Docker restarts, this is because containers get new random ports. Mitte includes several solutions:
+
+**Immediate Fix:**
+```bash
+# Fix all broken routes
+sudo mitte fix-routes
+
+# Or restart a specific app
+sudo mitte apps restart <appname>
+```
+
+**Automatic Prevention:**
+The setup process installs a container watcher service that automatically detects port changes and updates Caddy. You can manage it with:
+
+```bash
+# Check watcher status
+sudo mitte watcher status
+
+# Restart the watcher
+sudo mitte watcher restart
+
+# View watcher logs
+sudo mitte watcher logs
+```
+
+**Manual Route Management:**
+```bash
+# List all apps and their current ports
+sudo mitte apps list
+
+# Check if an app's route exists
+sudo mitte routes check <appname>
+
+# Manually update an app's route
+sudo mitte routes update <appname> <port>
+```
+
+#### Buildpack Issues with Docker 29.x+
+
+If you encounter Docker API version errors with buildpacks, ensure you have pack CLI v0.39.0+ installed:
+
+```bash
+# The setup command installs the correct version automatically
+sudo mitte setup
 ```
 
 ### 💖 Contributing
