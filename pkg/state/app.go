@@ -14,6 +14,7 @@ type App struct {
 	AppName       string            `json:"app_name"`
 	Domains       []string          `json:"domains"`
 	EnvVars       map[string]string `json:"env_vars"`
+	RawEnv        string            `json:"raw_env,omitempty"`        // Raw environment variables with comments
 	Image         string            `json:"image,omitempty"`          // Pre-built Docker image
 	Volumes       []string          `json:"volumes,omitempty"`        // Volume mounts (host:container)
 	Ports         []string          `json:"ports,omitempty"`          // Port mappings (host:container)
@@ -70,6 +71,31 @@ func (a *App) Save() error {
 	}
 
 	return os.WriteFile(filePath, data, 0644)
+}
+
+// SyncEnv synchronizes EnvVars from RawEnv. It parses RawEnv and updates
+// the EnvVars map, removing any keys that are no longer present in RawEnv.
+func (a *App) SyncEnv() {
+	if a.EnvVars == nil {
+		a.EnvVars = make(map[string]string)
+	}
+
+	// Parse RawEnv
+	newVars := make(map[string]string)
+	lines := strings.Split(a.RawEnv, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			newVars[parts[0]] = parts[1]
+		}
+	}
+
+	// Update EnvVars
+	a.EnvVars = newVars
 }
 
 // ResolveAppName takes a string that is either a short app name or a domain

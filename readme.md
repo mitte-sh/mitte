@@ -244,6 +244,10 @@ mitte config set <appname> KEY=VALUE --no-restart
 
 # Unset one or more environment variables
 mitte config unset <appname> SECRET_KEY
+
+# Bulk edit environment variables in a text editor
+# This method preserves comments and the order of variables
+mitte config edit <appname>
 ```
 
 #### Domain Management
@@ -471,15 +475,18 @@ mitte postgres destroy <instance-name>
 **Connection Pooling Commands in Detail**:
 
 1. **`mitte mariadb connections stats <instance-name>`**
+
    - Shows current connection statistics without analysis
    - Displays: Max Connections, Threads Connected, Threads Running, Threads Cached, Threads Created, Connection Usage %, Connection Churn
 
 2. **`mitte mariadb connections analyze <instance-name>`**
+
    - Analyzes connection usage and provides recommendations
    - Identifies: High connection usage, connection churn issues, long-running queries
    - Suggests configuration improvements based on current usage patterns
 
 3. **`mitte mariadb connections optimize <instance-name> [--preset]`**
+
    - Generates optimized configuration based on current usage or specified preset
    - Auto-detects container memory limits for optimal buffer pool sizing
    - Provides configuration that can be saved to a file and applied

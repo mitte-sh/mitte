@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -32,8 +31,16 @@ var configListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if len(app.EnvVars) == 0 {
+		if len(app.EnvVars) == 0 && app.RawEnv == "" {
 			fmt.Fprintf(os.Stderr, "No environment variables are set for '%s'.\n", appName)
+			return
+		}
+
+		if app.RawEnv != "" {
+			fmt.Print(app.RawEnv)
+			if !strings.HasSuffix(app.RawEnv, "\n") {
+				fmt.Println()
+			}
 			return
 		}
 
@@ -73,7 +80,31 @@ var configSetCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "\nError: variable format must be KEY=VALUE, but got '%s'.\n", v)
 				os.Exit(1)
 			}
-			app.EnvVars[parts[0]] = parts[1]
+			key := parts[0]
+			value := parts[1]
+			app.EnvVars[key] = value
+
+			// Update RawEnv if it exists
+			if app.RawEnv != "" {
+				lines := strings.Split(app.RawEnv, "\n")
+				found := false
+				for i, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, key+"=") {
+						lines[i] = fmt.Sprintf("%s=%s", key, value)
+						found = true
+						break
+					}
+				}
+				if !found {
+					if len(lines) > 0 && lines[len(lines)-1] != "" {
+						app.RawEnv += "\n"
+					}
+					app.RawEnv += fmt.Sprintf("%s=%s\n", key, value)
+				} else {
+					app.RawEnv = strings.Join(lines, "\n")
+				}
+			}
 		}
 
 		if err := app.Save(); err != nil {
@@ -121,6 +152,19 @@ var configUnsetCmd = &cobra.Command{
 		fmt.Fprintf(os.Stderr, "Unsetting environment variables from %s... ", appName)
 		for _, key := range keysToUnset {
 			delete(app.EnvVars, key)
+
+			// Update RawEnv if it exists
+			if app.RawEnv != "" {
+				lines := strings.Split(app.RawEnv, "\n")
+				var newLines []string
+				for _, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if !strings.HasPrefix(trimmed, key+"=") {
+						newLines = append(newLines, line)
+					}
+				}
+				app.RawEnv = strings.Join(newLines, "\n")
+			}
 		}
 
 		if err := app.Save(); err != nil {
@@ -156,61 +200,49 @@ to apply the changes, which will trigger a redeployment.`,
 			os.Exit(1)
 		}
 
-		// 1. Fetch current environment variables by running `mitte config list`.
+		// 1. Fetch current environment variables.
 		fmt.Fprintf(os.Stderr, "-----> Fetching current environment for '%s'...\n", appName)
-		listCmd := exec.Command("mitte", "config", "list", appName)
-		currentEnvBytes, err := listCmd.Output()
+		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching current config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error loading application state: %v\n", err)
 			os.Exit(1)
 		}
 
+		currentEnv := app.RawEnv
+		if currentEnv == "" && len(app.EnvVars) > 0 {
+			// Fallback to EnvVars if RawEnv is not set
+			var sb strings.Builder
+			for key, value := range app.EnvVars {
+				sb.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+			}
+			currentEnv = sb.String()
+		}
+
 		// 2. Open the user's default editor with the current env vars.
-		newEnvContent, err := openInEditor(string(currentEnvBytes))
+		newEnvContent, err := openInEditor(currentEnv)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
 			os.Exit(1)
 		}
 
 		// If the user didn't change anything, we're done.
-		if newEnvContent == string(currentEnvBytes) {
+		if newEnvContent == currentEnv {
 			fmt.Println("No changes detected. Aborting.")
 			return
 		}
 
-		// 3. Calculate the difference between the old and new env vars.
-		oldVars := parseEnv(string(currentEnvBytes))
-		newVars := parseEnv(newEnvContent)
+		// 3. Update the app state.
+		app.RawEnv = newEnvContent
+		app.SyncEnv()
 
-		varsToSet, varsToUnset := diffEnv(oldVars, newVars)
-
-		// 4. Call `mitte config set` and `mitte config unset` to apply changes.
-		if len(varsToSet) > 0 {
-			fmt.Fprintf(os.Stderr, "-----> Setting %d variable(s)...\n", len(varsToSet))
-			setArgs := []string{"config", "set", appName}
-			setArgs = append(setArgs, "--no-restart")
-			setArgs = append(setArgs, varsToSet...)
-
-			if err := runMitteRemoteCommand(setArgs...); err != nil {
-				fmt.Fprintf(os.Stderr, "Error setting variables: %v\n", err)
-				os.Exit(1)
-			}
+		if err := app.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			os.Exit(1)
 		}
 
-		if len(varsToUnset) > 0 {
-			fmt.Fprintf(os.Stderr, "-----> Unsetting %d variable(s)...\n", len(varsToUnset))
-			unsetArgs := []string{"config", "unset", appName}
-			unsetArgs = append(unsetArgs, "--no-restart")
-			unsetArgs = append(unsetArgs, varsToUnset...)
-			if err := runMitteRemoteCommand(unsetArgs...); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unsetting variables: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		// 5. Trigger a final restart to apply all batched changes.
+		// 4. Trigger a restart to apply all changes.
 		fmt.Fprintln(os.Stderr, "-----> Applying changes by restarting the application...")
-		if err := runMitteRemoteCommand("restart", appName); err != nil {
+		if err := actions.RestartApp(appName); err != nil {
 			fmt.Fprintf(os.Stderr, "Error restarting application: %v\n", err)
 			os.Exit(1)
 		}

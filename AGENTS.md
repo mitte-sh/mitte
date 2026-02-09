@@ -101,7 +101,7 @@
 - `mitte config set <app> KEY=VALUE` - Set environment variables
 - `mitte config unset <app> KEY` - Remove environment variables
 - `mitte config list <app>` - List current environment variables
-- `mitte config edit <app>` - Bulk edit environment variables in an editor
+- `mitte config edit <app>` - Bulk edit environment variables in an editor (preserves comments and order)
 
 ## Implementation Details
 
@@ -109,6 +109,7 @@
 
 - App state is stored in `/var/lib/mitte/apps/<app-name>.json`
 - Always use `pkg/state` to load and save app configuration
+- Environment variables are stored in `RawEnv` to preserve comments and order, while `EnvVars` map is used for runtime. Always call `app.SyncEnv()` after modifying `RawEnv`.
 
 ### Deployment Flow
 
