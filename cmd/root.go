@@ -8,6 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is the current version of Mitte, set at build time.
+var Version = "dev"
+
 // A helper to make running commands easier and clearer
 func runCommand(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
@@ -18,8 +21,9 @@ func runCommand(name string, args ...string) error {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "mitte",
-	Short: "Mitte is a minimalist, self-hosted PaaS written in Go.",
+	Use:     "mitte",
+	Version: Version,
+	Short:   "Mitte is a minimalist, self-hosted PaaS written in Go.",
 	Long: `Mitte | /ˈmit.te/ | v. (Latin) "Send!"
 
 A minimalist, self-hosted Platform-as-a-Service.
