@@ -3,9 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +119,7 @@ var mariadbCreateCmd = &cobra.Command{
 			dbPassword = userPassword
 		} else {
 			var err error
-			dbPassword, err = generatePassword(32)
+			dbPassword, err = GeneratePassword(32)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
 				os.Exit(1)
@@ -515,7 +513,7 @@ If no privileges are specified, the user will have no privileges by default.`,
 		// Generate password if not provided
 		if password == "" {
 			var err error
-			password, err = generatePassword(32)
+			password, err = GeneratePassword(32)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
 				os.Exit(1)
@@ -953,17 +951,4 @@ to automatically restart the container after applying configuration.`,
 	mariadbCmd.AddCommand(mariadbConnectionsCmd)
 
 	rootCmd.AddCommand(mariadbCmd)
-}
-
-func generatePassword(length int) (string, error) {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	result := make([]byte, length)
-	for i := range result {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		if err != nil {
-			return "", err
-		}
-		result[i] = chars[idx.Int64()]
-	}
-	return string(result), nil
 }

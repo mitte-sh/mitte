@@ -15,6 +15,7 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 *   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
 *   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
 *   🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
+*   🐘 **PostgreSQL Support**: Built-in PostgreSQL database service with health checks, backup/restore, and user management.
 *   🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
 *   🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
 
@@ -366,6 +367,39 @@ mitte mariadb connections apply mydb --pooling-preset=high-traffic --restart
 mitte mariadb destroy <instance-name>
 ```
 
+#### Database Management (PostgreSQL)
+Manage PostgreSQL database instances for your applications.
+
+```bash
+# List all PostgreSQL instances
+mitte postgres list
+
+# Create a new PostgreSQL instance
+mitte postgres create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password]
+
+# Example: Create a PostgreSQL instance with version 16 and initial database 'myapp'
+mitte postgres create mydb --version=16 --database=myapp
+
+# Link a PostgreSQL instance to an app (sets DATABASE_URL)
+mitte postgres link <instance-name> <app-name> [env-var-name]
+
+# This sets a DATABASE_URL environment variable in the format: postgres://user:password@instance:5432/database
+
+# Create a backup of a PostgreSQL instance
+mitte postgres backup <instance-name> <output-file>
+
+# Restore databases from a backup file
+mitte postgres restore <instance-name> <backup-file>
+
+# Manage database users
+mitte postgres users create <instance-name> <username> [--password=...] [--database=...]
+mitte postgres users delete <instance-name> <username>
+mitte postgres users list <instance-name>
+
+# Permanently destroy a PostgreSQL instance and its data
+mitte postgres destroy <instance-name>
+```
+
 ##### MariaDB Features
 
 **Health Checks**: All MariaDB containers include automatic health checks that:
@@ -457,6 +491,23 @@ table_open_cache = 2000
 slow_query_log = 1
 long_query_time = 2
 ```
+
+##### PostgreSQL Features
+
+**Health Checks**: All PostgreSQL containers include automatic health checks that:
+- Run `pg_isready` every 10 seconds after a 30-second startup period
+- Mark containers unhealthy after 5 consecutive failures
+- Enable automatic restarts for reliable database operation
+
+**Backup/Restore**: Full database protection with:
+- Complete SQL dumps of all databases using `pg_dumpall`
+- Secure password retrieval from service state
+- Easy restoration from backup files using `psql`
+
+**User Management**: Easy database access control:
+- Create and delete database users with specific database access
+- Automatic secure password generation
+- List existing users
 
 #### Access Management (SSH Keys)
 Manage the public SSH keys that are authorized to deploy applications.
