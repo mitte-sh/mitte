@@ -33,11 +33,10 @@ var configListCmd = &cobra.Command{
 		}
 
 		if len(app.EnvVars) == 0 {
-			fmt.Printf("No environment variables are set for '%s'.\n", appName)
+			fmt.Fprintf(os.Stderr, "No environment variables are set for '%s'.\n", appName)
 			return
 		}
 
-		fmt.Printf("=== Environment variables for %s ===\n", appName)
 		for key, value := range app.EnvVars {
 			fmt.Printf("%s=%s\n", key, value)
 		}
@@ -162,11 +161,8 @@ to apply the changes, which will trigger a redeployment.`,
 		listCmd := exec.Command("mitte", "config", "list", appName)
 		currentEnvBytes, err := listCmd.Output()
 		if err != nil {
-			// Handle cases where the app has no env vars yet.
-			if !strings.Contains(string(currentEnvBytes), "No environment variables") {
-				fmt.Fprintf(os.Stderr, "Error fetching current config: %v\n", err)
-				os.Exit(1)
-			}
+			fmt.Fprintf(os.Stderr, "Error fetching current config: %v\n", err)
+			os.Exit(1)
 		}
 
 		// 2. Open the user's default editor with the current env vars.
