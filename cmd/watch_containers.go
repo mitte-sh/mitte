@@ -11,9 +11,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/deployer"
-	"github.com/mitteapp/mitteapp/pkg/router"
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/router"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 var watchContainersCmd = &cobra.Command{

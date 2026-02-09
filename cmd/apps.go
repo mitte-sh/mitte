@@ -18,11 +18,11 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/builder"
-	"github.com/mitteapp/mitteapp/pkg/config"
-	"github.com/mitteapp/mitteapp/pkg/deployer"
-	"github.com/mitteapp/mitteapp/pkg/router"
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/builder"
+	"github.com/mitte-sh/mitte/pkg/config"
+	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/router"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 var appsCmd = &cobra.Command{

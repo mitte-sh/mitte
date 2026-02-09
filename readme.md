@@ -1,35 +1,35 @@
----
-
 **Mitte** is a personal PaaS (Platform-as-a-Service) implemented in a single, modern Go binary. It allows you to transform any server into your own private cloud deployment platform.
 
 Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hosted deployment workflow for any application. Deploy from source code using `git push` (with automatic building via Dockerfiles) or deploy pre-built Docker images directly for maximum flexibility and speed.
 
 ### ✨ Features
 
-*   🚀 **Git Push to Deploy**: The classic Heroku workflow you know and love.
-*   📦 **Single Go Binary**: Incredibly easy to install and manage. No complex dependency chains.
-*   🔒 **Automatic HTTPS**: Caddy provides free, managed SSL certificates for all your apps, out-of-the-box.
-*   🏗️ **Dockerfile Support**: Automatically builds your application using your existing `Dockerfile`.
-*   📦 **Buildpack Support**: Deploy applications without Dockerfiles using Cloud Native Buildpacks (CNB) for automatic language detection and building.
-*   🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
-*   ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
-*   🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
-*   🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
-*   🐘 **PostgreSQL Support**: Built-in PostgreSQL database service with health checks, backup/restore, and user management.
-*   🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
-*   🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
+- 🚀 **Git Push to Deploy**: The classic Heroku workflow you know and love.
+- 📦 **Single Go Binary**: Incredibly easy to install and manage. No complex dependency chains.
+- 🔒 **Automatic HTTPS**: Caddy provides free, managed SSL certificates for all your apps, out-of-the-box.
+- 🏗️ **Dockerfile Support**: Automatically builds your application using your existing `Dockerfile`.
+- 📦 **Buildpack Support**: Deploy applications without Dockerfiles using Cloud Native Buildpacks (CNB) for automatic language detection and building.
+- 🐳 **Pre-built Image Support**: Deploy any Docker image directly without building from source code.
+- ⚙️ **Comprehensive CLI**: A powerful, easy-to-use command-line interface for managing the full lifecycle of your apps: configuration, domains, logs, and more.
+- 🛡️ **Secure by Design**: Runs operations through a dedicated, unprivileged `mitte` user on the host.
+- 🗄️ **MariaDB Support**: Built-in MariaDB database service with health checks, backup/restore, and custom configuration support.
+- 🐘 **PostgreSQL Support**: Built-in PostgreSQL database service with health checks, backup/restore, and user management.
+- 🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
+- 🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
 
 ### How It Works
 
 Mitte listens for `git push` commands over SSH. When it receives a push for an app, it follows one of three deployment paths based on configuration priority:
 
 #### Source Code Deployment with Dockerfile (Default)
+
 1.  **Receives** the source code in a bare git repository.
 2.  **Builds** the code into a Docker image using your `Dockerfile`.
 3.  **Runs** the image as a new container.
 4.  **Routes** traffic to the new container by dynamically updating its Caddy reverse proxy via Caddy's admin API.
 
 #### Source Code Deployment with Buildpacks
+
 1.  **Receives** the source code in a bare git repository.
 2.  **Detects** the application language and framework automatically.
 3.  **Builds** the application using Cloud Native Buildpacks (CNB) without requiring a `Dockerfile`.
@@ -37,6 +37,7 @@ Mitte listens for `git push` commands over SSH. When it receives a push for an a
 5.  **Routes** traffic to the new container.
 
 #### Pre-built Image Deployment
+
 1.  **Receives** the git push (for triggering deployment).
 2.  **Skips** the build process entirely.
 3.  **Pulls** the pre-configured Docker image.
@@ -58,7 +59,7 @@ SSH into your server as root and run the installer. This script downloads the la
 ```bash
 # Run this on your DEDICATED server
 ssh root@your-server.com
-curl -sSL https://mitteapp.com/install.sh | bash
+curl -sSL https://mitte.sh/install.sh | bash
 ```
 
 **2. Add Your Public SSH Key**
@@ -83,6 +84,7 @@ git push mitte main
 **That's it!** Your application is now deployed at `http://my-awesome-app.your-server.com`.
 
 > **Note**: Mitte supports three deployment modes:
+>
 > - **Source Code with Dockerfile**: Push your code with a `Dockerfile` and let Mitte build it automatically
 > - **Source Code with Buildpacks**: Push your code and let Mitte detect your language and build using Cloud Native Buildpacks
 > - **Pre-built Images**: Configure a Docker image and deploy it directly (see the Pre-built Images section below)
@@ -92,6 +94,7 @@ git push mitte main
 Mitte also supports deploying pre-built Docker images directly, perfect for applications that are already containerized or for faster deployments.
 
 **⚠️ Environment Variable Limitation**: When using pre-built images, environment variables are applied at runtime, not during image build. This means:
+
 - ✅ Environment variables will be available to your running container
 - ❌ Environment variables cannot be used during the image build process
 - 🔄 If you need environment variables during build (e.g., for database migrations), use the source code deployment method with a Dockerfile instead
@@ -166,6 +169,7 @@ Mitte will automatically detect your application type based on files like `packa
 **3. Supported Languages and Frameworks**
 
 Mitte can automatically detect and build applications in:
+
 - **Node.js** (`package.json`)
 - **Python** (`requirements.txt`, `Pipfile`, `pyproject.toml`)
 - **Go** (`go.mod`, `go.sum`, `main.go`)
@@ -179,6 +183,7 @@ Mitte can automatically detect and build applications in:
 Mitte comes with a powerful command-line interface to manage all aspects of your applications. All commands are run on your server (e.g., by running `ssh root@your-server.com "mitte <command>"`).
 
 #### App Management
+
 Manage your applications.
 
 ```bash
@@ -224,6 +229,7 @@ mitte apps destroy <appname>
 ```
 
 #### Configuration (Env Vars)
+
 Manage environment variables for a specific application. Changes take effect by restarting the app's container unless `--no-restart` is specified.
 
 ```bash
@@ -241,6 +247,7 @@ mitte config unset <appname> SECRET_KEY
 ```
 
 #### Domain Management
+
 Manage custom domains for an application. Mitte will automatically provision SSL certificates for all domains.
 
 ```bash
@@ -255,6 +262,7 @@ mitte domains remove <appname> www.my-awesome-app.com
 ```
 
 #### Log Management
+
 View the logs of a running application.
 
 ```bash
@@ -274,6 +282,7 @@ mitte logs <appname> -f -n 100
 ```
 
 #### Database Management (MariaDB)
+
 Manage MariaDB database instances for your applications.
 
 ```bash
@@ -368,6 +377,7 @@ mitte mariadb destroy <instance-name>
 ```
 
 #### Database Management (PostgreSQL)
+
 Manage PostgreSQL database instances for your applications.
 
 ```bash
@@ -403,21 +413,25 @@ mitte postgres destroy <instance-name>
 ##### MariaDB Features
 
 **Health Checks**: All MariaDB containers include automatic health checks that:
+
 - Run `mysqladmin ping` every 10 seconds after a 30-second startup period
 - Mark containers unhealthy after 3 consecutive failures
 - Enable automatic restarts for reliable database operation
 
 **Backup/Restore**: Full database protection with:
+
 - Complete SQL dumps of all databases using `mysqldump`
 - Secure password retrieval from service state
 - Easy restoration from backup files
 
 **Custom Configuration**: Advanced database tuning with:
+
 - Mount custom `.cnf` files into `/etc/mysql/conf.d/custom.cnf`
 - Support for performance tuning, security settings, and production requirements
 - Read-only mounting for security
 
 **Version Upgrades**: Safe database migration with:
+
 - Automatic backup creation before upgrade
 - In-place version upgrades with data preservation
 - Dry-run mode for testing upgrades
@@ -425,6 +439,7 @@ mitte postgres destroy <instance-name>
 - Rollback tracking with previous version history
 
 **Connection Pooling**: Optimized database performance with:
+
 - Preset configurations (small, medium, large, high-traffic)
 - Automatic connection usage analysis and statistics
 - Intelligent configuration recommendations with resource detection
@@ -464,18 +479,21 @@ mitte postgres destroy <instance-name>
    - `--restart` flag for parameters requiring full container restart
 
 **Pooling Presets**:
+
 - **small**: 100 connections, 8 thread cache, 256M buffer pool (development)
 - **medium**: 200 connections, 50 thread cache, 1G buffer pool (standard production)
 - **large**: 300 connections, 75 thread cache, 2G buffer pool (high-concurrency)
 - **high-traffic**: 500 connections, 100 thread cache, 4G buffer pool, optimized timeouts (enterprise)
 
 **Resource Detection**:
+
 - Auto-detects container memory limits from Docker
 - Calculates optimal InnoDB buffer pool size (75% of available RAM)
 - Ensures sufficient memory for OS and other processes
 - Falls back to preset defaults if detection fails
 
 **Example Configuration File** (`my-performance.cnf`):
+
 ```ini
 [mariadbd]
 # Performance tuning
@@ -495,21 +513,25 @@ long_query_time = 2
 ##### PostgreSQL Features
 
 **Health Checks**: All PostgreSQL containers include automatic health checks that:
+
 - Run `pg_isready` every 10 seconds after a 30-second startup period
 - Mark containers unhealthy after 5 consecutive failures
 - Enable automatic restarts for reliable database operation
 
 **Backup/Restore**: Full database protection with:
+
 - Complete SQL dumps of all databases using `pg_dumpall`
 - Secure password retrieval from service state
 - Easy restoration from backup files using `psql`
 
 **User Management**: Easy database access control:
+
 - Create and delete database users with specific database access
 - Automatic secure password generation
 - List existing users
 
 #### Access Management (SSH Keys)
+
 Manage the public SSH keys that are authorized to deploy applications.
 
 ```bash
@@ -527,6 +549,7 @@ Manage the public SSH keys that are authorized to deploy applications.
 ```
 
 #### Host & Project Management
+
 Utility commands for setting up the Mitte host and local project remotes.
 
 ```bash
@@ -546,6 +569,7 @@ mitte remote --host your-server.com --app my-awesome-app
 If you see errors like `dial tcp 127.0.0.1:33188: connect: connection refused` in Caddy logs after Docker restarts, this is because containers get new random ports. Mitte includes several solutions:
 
 **Immediate Fix:**
+
 ```bash
 # Fix all broken routes
 sudo mitte fix-routes
@@ -569,6 +593,7 @@ sudo mitte watcher logs
 ```
 
 **Manual Route Management:**
+
 ```bash
 # List all apps and their current ports
 sudo mitte apps list
@@ -597,6 +622,4 @@ We would love your help to make `mitte` even better! If you're interested, pleas
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
----
-
-[mitteapp.com](https://mitteapp.com)
+[mitte.sh](https://mitte.sh)

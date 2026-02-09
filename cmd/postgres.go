@@ -21,9 +21,9 @@ import (
 	"github.com/moby/term"
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/actions"
-	"github.com/mitteapp/mitteapp/pkg/services"
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/services"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 var postgresCmd = &cobra.Command{

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mitteapp/mitteapp/pkg/deployer"
-	"github.com/mitteapp/mitteapp/pkg/router"
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/router"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 // RestartApp takes an existing application and redeploys it with its latest image

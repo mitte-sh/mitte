@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, configFile string) error {

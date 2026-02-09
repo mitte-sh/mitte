@@ -15,7 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 func CreatePostgres(ctx context.Context, instanceName, rootPassword, user, database, version string) error {

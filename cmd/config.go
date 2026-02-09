@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/actions"
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 // configCmd is the base group for configuration commands.

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mitteapp/mitteapp/pkg/config"
+	"github.com/mitte-sh/mitte/pkg/config"
 )
 
 const caddyAdminAPI = "http://localhost:2019"

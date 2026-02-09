@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mitteapp/mitteapp/cmd"
+	"github.com/mitte-sh/mitte/cmd"
 )
 
 func main() {

@@ -11,7 +11,7 @@ import (
 	"github.com/moby/moby/pkg/stdcopy"
 	"github.com/spf13/cobra"
 
-	"github.com/mitteapp/mitteapp/pkg/state"
+	"github.com/mitte-sh/mitte/pkg/state"
 )
 
 var logsCmd = &cobra.Command{
