@@ -19,7 +19,7 @@ import (
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
-func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, configFile string) error {
+func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, configFile, dataDir string) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -40,7 +40,6 @@ func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, con
 		Image: theImage,
 		Env: []string{
 			fmt.Sprintf("MARIADB_ROOT_PASSWORD=%s", rootPassword),
-			// TODO: Add more config vars here, like MARIADB_DATABASE
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"mysqladmin", "ping", "-h", "localhost"},
@@ -52,8 +51,13 @@ func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, con
 	}
 
 	hostConfig := &container.HostConfig{
-		Binds:         []string{fmt.Sprintf("mitte-db-%s:/var/lib/mysql", instanceName)},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+
+	if dataDir != "" {
+		hostConfig.Binds = []string{fmt.Sprintf("%s:/var/lib/mysql", dataDir)}
+	} else {
+		hostConfig.Binds = []string{fmt.Sprintf("mitte-mariadb-data-%s:/var/lib/mysql", instanceName)}
 	}
 
 	// Mount custom config file if provided
@@ -98,12 +102,25 @@ func DestroyMariaDB(ctx context.Context, instanceName string) error {
 		}
 	}
 
-	// 2. Remove the persistent volume. This is the crucial step to delete the data.
-	volumeName := fmt.Sprintf("mitte-db-%s", instanceName)
-	if err := cli.VolumeRemove(ctx, volumeName, true); err != nil {
-		if !client.IsErrNotFound(err) {
-			return fmt.Errorf("failed to remove volume '%s': %w", volumeName, err)
+	// 2. Remove the persistent volume if it was used.
+	svc, err := state.LoadService("mariadb", instanceName)
+	if err != nil {
+		// If we can't load the service state, we might not know if it used a custom data dir.
+		// However, we should try to remove the default volume anyway to be safe/clean if it exists.
+		// But strictly speaking we should probably warn.
+		// For now, let's proceed with default volume removal if state load fails, assuming default.
+	}
+
+	// Only remove volume if DataDir is empty (meaning managed volume was used)
+	if svc == nil || svc.DataDir == "" {
+		volumeName := fmt.Sprintf("mitte-mariadb-data-%s", instanceName)
+		if err := cli.VolumeRemove(ctx, volumeName, true); err != nil {
+			if !client.IsErrNotFound(err) {
+				return fmt.Errorf("failed to remove volume '%s': %w", volumeName, err)
+			}
 		}
+	} else {
+		fmt.Printf("Skipping volume removal for custom data directory: %s\n", svc.DataDir)
 	}
 
 	return nil
@@ -371,8 +388,13 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	}
 
 	hostConfig := &container.HostConfig{
-		Binds:         []string{fmt.Sprintf("mitte-db-%s:/var/lib/mysql", instanceName)},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+
+	if svc.DataDir != "" {
+		hostConfig.Binds = []string{fmt.Sprintf("%s:/var/lib/mysql", svc.DataDir)}
+	} else {
+		hostConfig.Binds = []string{fmt.Sprintf("mitte-mariadb-data-%s:/var/lib/mysql", instanceName)}
 	}
 
 	// Mount custom config file if it exists

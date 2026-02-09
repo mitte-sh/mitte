@@ -18,7 +18,7 @@ import (
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
-func CreatePostgres(ctx context.Context, instanceName, rootPassword, user, database, version string) error {
+func CreatePostgres(ctx context.Context, instanceName, rootPassword, user, database, version, dataDir string) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -60,8 +60,13 @@ func CreatePostgres(ctx context.Context, instanceName, rootPassword, user, datab
 	}
 
 	hostConfig := &container.HostConfig{
-		Binds:         []string{fmt.Sprintf("mitte-postgres-data-%s:/var/lib/postgresql/data", instanceName)},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+
+	if dataDir != "" {
+		hostConfig.Binds = []string{fmt.Sprintf("%s:/var/lib/postgresql/data", dataDir)}
+	} else {
+		hostConfig.Binds = []string{fmt.Sprintf("mitte-postgres-data-%s:/var/lib/postgresql/data", instanceName)}
 	}
 
 	networkingConfig := &network.NetworkingConfig{
@@ -91,11 +96,21 @@ func DestroyPostgres(ctx context.Context, instanceName string) error {
 		}
 	}
 
-	volumeName := fmt.Sprintf("mitte-postgres-data-%s", instanceName)
-	if err := cli.VolumeRemove(ctx, volumeName, true); err != nil {
-		if !client.IsErrNotFound(err) {
-			return fmt.Errorf("failed to remove volume '%s': %w", volumeName, err)
+	// Remove volume only if it's managed (DataDir is empty)
+	svc, err := state.LoadService("postgres", instanceName)
+	if err != nil {
+		// Proceed with caution, maybe default to trying to remove volume?
+	}
+
+	if svc == nil || svc.DataDir == "" {
+		volumeName := fmt.Sprintf("mitte-postgres-data-%s", instanceName)
+		if err := cli.VolumeRemove(ctx, volumeName, true); err != nil {
+			if !client.IsErrNotFound(err) {
+				return fmt.Errorf("failed to remove volume '%s': %w", volumeName, err)
+			}
 		}
+	} else {
+		fmt.Printf("Skipping volume removal for custom data directory: %s\n", svc.DataDir)
 	}
 
 	return nil

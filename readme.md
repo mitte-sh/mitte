@@ -290,7 +290,7 @@ Manage MariaDB database instances for your applications.
 mitte mariadb list
 
 # Create a new MariaDB instance
-mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--config-file=path] [--max-connections=N] [--thread-cache-size=N] [--table-open-cache=N] [--innodb-buffer-pool-size=SIZE] [--query-cache-size=SIZE] [--pooling-preset=PRESET]
+mitte mariadb create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--config-file=path] [--data-dir=path] [--max-connections=N] [--thread-cache-size=N] [--table-open-cache=N] [--innodb-buffer-pool-size=SIZE] [--query-cache-size=SIZE] [--pooling-preset=PRESET]
 
 # Example: Create a MariaDB instance with version 10.11 and initial database 'myapp'
 mitte mariadb create mydb --version=10.11 --database=myapp
@@ -300,6 +300,9 @@ mitte mariadb create mydb --user=myuser --database=myapp
 
 # Example: Create a MariaDB instance with custom configuration
 mitte mariadb create mydb --config-file=/path/to/my-config.cnf
+
+# Example: Create a MariaDB instance with a custom host data directory
+mitte mariadb create mydb --data-dir=/docker/joplindb
 
 # Example: Create with connection pooling preset
 mitte mariadb create mydb --pooling-preset=high-traffic --version=10.11
@@ -385,10 +388,13 @@ Manage PostgreSQL database instances for your applications.
 mitte postgres list
 
 # Create a new PostgreSQL instance
-mitte postgres create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password]
+mitte postgres create <instance-name> [--version=latest] [--database=name] [--user=username] [--password=password] [--data-dir=path]
 
 # Example: Create a PostgreSQL instance with version 16 and initial database 'myapp'
 mitte postgres create mydb --version=16 --database=myapp
+
+# Example: Create a PostgreSQL instance with a custom host data directory
+mitte postgres create mydb --data-dir=/docker/postgres-data
 
 # Link a PostgreSQL instance to an app (sets DATABASE_URL)
 mitte postgres link <instance-name> <app-name> [env-var-name]
@@ -429,6 +435,12 @@ mitte postgres destroy <instance-name>
 - Mount custom `.cnf` files into `/etc/mysql/conf.d/custom.cnf`
 - Support for performance tuning, security settings, and production requirements
 - Read-only mounting for security
+
+**Custom Data Directory**: Store your data where you want:
+
+- Use `--data-dir=/path/to/data` to mount a specific host directory
+- Data persists on the host even if the instance is destroyed (safety feature)
+- Default behavior uses managed Docker volumes for convenience
 
 **Version Upgrades**: Safe database migration with:
 
@@ -523,6 +535,12 @@ long_query_time = 2
 - Complete SQL dumps of all databases using `pg_dumpall`
 - Secure password retrieval from service state
 - Easy restoration from backup files using `psql`
+
+**Custom Data Directory**: Store your data where you want:
+
+- Use `--data-dir=/path/to/data` to mount a specific host directory
+- Data persists on the host even if the instance is destroyed (safety feature)
+- Default behavior uses managed Docker volumes for convenience
 
 **User Management**: Easy database access control:
 

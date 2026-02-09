@@ -21,6 +21,7 @@ type Service struct {
 	Port            int    `json:"port"`
 	Username        string `json:"username"`
 	ConfigFile      string `json:"config_file"`
+	DataDir         string `json:"data_dir,omitempty"` // Custom data directory on host
 	LastBackupPath  string `json:"last_backup_path,omitempty"`
 	UpgradedAt      string `json:"upgraded_at,omitempty"`
 

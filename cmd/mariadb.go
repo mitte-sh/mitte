@@ -97,6 +97,7 @@ var mariadbCreateCmd = &cobra.Command{
 		user, _ := cmd.Flags().GetString("user")
 		userPassword, _ := cmd.Flags().GetString("password")
 		configFile, _ := cmd.Flags().GetString("config-file")
+		dataDir, _ := cmd.Flags().GetString("data-dir")
 		maxConnections, _ := cmd.Flags().GetInt("max-connections")
 		threadCacheSize, _ := cmd.Flags().GetInt("thread-cache-size")
 		tableOpenCache, _ := cmd.Flags().GetInt("table-open-cache")
@@ -149,30 +150,51 @@ var mariadbCreateCmd = &cobra.Command{
 		termFd, isTerm := term.GetFdInfo(os.Stderr)
 		jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, termFd, isTerm, nil)
 
-		// 2. Create Volume
+		// 2. Setup storage (Volume or Bind Mount)
 		var volumeName string
-		if _, err := cli.VolumeInspect(ctx, "mitte-mariadb-data-"+instanceName); err != nil {
-			if errdefs.IsNotFound(err) {
-				fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
-				_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
-					Name: "mitte-mariadb-data-" + instanceName,
-					Labels: map[string]string{
-						"app.mitte.type":       "mariadb",
-						"app.mitte.instance":   instanceName,
-						"app.mitte.created-by": "mitte",
-					},
-				})
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
-					os.Exit(1)
-				}
-				volumeName = "mitte-mariadb-data-" + instanceName
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
+		var bindSource string
+
+		if dataDir != "" {
+			// Use custom host directory
+			absPath, err := filepath.Abs(dataDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to resolve data directory path: %v\n", err)
 				os.Exit(1)
 			}
+			bindSource = absPath
+
+			// Ensure directory exists
+			if err := os.MkdirAll(bindSource, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create data directory: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Using custom data directory: %s\n", bindSource)
 		} else {
-			volumeName = "mitte-mariadb-data-" + instanceName
+			// Use managed volume
+			volName := "mitte-mariadb-data-" + instanceName
+			if _, err := cli.VolumeInspect(ctx, volName); err != nil {
+				if errdefs.IsNotFound(err) {
+					fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
+					_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+						Name: volName,
+						Labels: map[string]string{
+							"app.mitte.type":       "mariadb",
+							"app.mitte.instance":   instanceName,
+							"app.mitte.created-by": "mitte",
+						},
+					})
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+						os.Exit(1)
+					}
+					volumeName = volName
+				} else {
+					fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				volumeName = volName
+			}
 		}
 
 		// 3. Create Container
@@ -196,12 +218,20 @@ var mariadbCreateCmd = &cobra.Command{
 			},
 		}
 
-		// Only mount volume if we created one
+		// Mount volume or directory
 		if volumeName != "" {
 			hostConfig.Mounts = []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
 					Source: volumeName,
+					Target: "/var/lib/mysql",
+				},
+			}
+		} else if bindSource != "" {
+			hostConfig.Mounts = []mount.Mount{
+				{
+					Type:   mount.TypeBind,
+					Source: bindSource,
 					Target: "/var/lib/mysql",
 				},
 			}
@@ -292,6 +322,7 @@ var mariadbCreateCmd = &cobra.Command{
 		svc.Port = 3306
 		svc.Username = user
 		svc.ConfigFile = configFile
+		svc.DataDir = bindSource
 
 		// Save pooling configuration
 		if maxConnections > 0 {
@@ -689,6 +720,7 @@ func init() {
 	mariadbCreateCmd.Flags().String("user", "", "The username for the database user (optional, defaults to root)")
 	mariadbCreateCmd.Flags().String("password", "", "The password for the database user (optional, will be generated if not provided)")
 	mariadbCreateCmd.Flags().String("config-file", "", "Path to a custom MariaDB configuration file (.cnf) to mount into the container")
+	mariadbCreateCmd.Flags().String("data-dir", "", "Host directory to store database data (optional)")
 	mariadbCreateCmd.Flags().Int("max-connections", 0, "Maximum number of concurrent connections (default: MariaDB default)")
 	mariadbCreateCmd.Flags().Int("thread-cache-size", 0, "Number of threads to cache for reuse (default: MariaDB default)")
 	mariadbCreateCmd.Flags().Int("table-open-cache", 0, "Number of table descriptors to cache (default: MariaDB default)")

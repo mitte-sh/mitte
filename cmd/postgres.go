@@ -88,6 +88,7 @@ var postgresCreateCmd = &cobra.Command{
 		initialDatabase, _ := cmd.Flags().GetString("database")
 		user, _ := cmd.Flags().GetString("user")
 		userPassword, _ := cmd.Flags().GetString("password")
+		dataDir, _ := cmd.Flags().GetString("data-dir")
 
 		fmt.Fprintf(os.Stderr, "-----> Creating PostgreSQL instance '%s'...\n", instanceName)
 
@@ -134,26 +135,50 @@ var postgresCreateCmd = &cobra.Command{
 		termFd, isTerm := term.GetFdInfo(os.Stderr)
 		jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, termFd, isTerm, nil)
 
-		// 2. Create Volume
-		volumeName := "mitte-postgres-data-" + instanceName
-		if _, err := cli.VolumeInspect(ctx, volumeName); err != nil {
-			if errdefs.IsNotFound(err) {
-				fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
-				_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
-					Name: volumeName,
-					Labels: map[string]string{
-						"app.mitte.type":       "postgres",
-						"app.mitte.instance":   instanceName,
-						"app.mitte.created-by": "mitte",
-					},
-				})
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+		// 2. Setup storage (Volume or Bind Mount)
+		var volumeName string
+		var bindSource string
+
+		if dataDir != "" {
+			// Use custom host directory
+			absPath, err := filepath.Abs(dataDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to resolve data directory path: %v\n", err)
+				os.Exit(1)
+			}
+			bindSource = absPath
+
+			// Ensure directory exists
+			if err := os.MkdirAll(bindSource, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to create data directory: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Using custom data directory: %s\n", bindSource)
+		} else {
+			// Use managed volume
+			volName := "mitte-postgres-data-" + instanceName
+			if _, err := cli.VolumeInspect(ctx, volName); err != nil {
+				if errdefs.IsNotFound(err) {
+					fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
+					_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
+						Name: volName,
+						Labels: map[string]string{
+							"app.mitte.type":       "postgres",
+							"app.mitte.instance":   instanceName,
+							"app.mitte.created-by": "mitte",
+						},
+					})
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+						os.Exit(1)
+					}
+					volumeName = volName
+				} else {
+					fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
-				os.Exit(1)
+				volumeName = volName
 			}
 		}
 
@@ -181,13 +206,24 @@ var postgresCreateCmd = &cobra.Command{
 			RestartPolicy: container.RestartPolicy{
 				Name: "always",
 			},
-			Mounts: []mount.Mount{
+		}
+
+		if volumeName != "" {
+			hostConfig.Mounts = []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
 					Source: volumeName,
 					Target: "/var/lib/postgresql/data",
 				},
-			},
+			}
+		} else if bindSource != "" {
+			hostConfig.Mounts = []mount.Mount{
+				{
+					Type:   mount.TypeBind,
+					Source: bindSource,
+					Target: "/var/lib/postgresql/data",
+				},
+			}
 		}
 
 		networkingConfig := &network.NetworkingConfig{
@@ -236,6 +272,7 @@ var postgresCreateCmd = &cobra.Command{
 		svc.Version = version
 		svc.Port = 5432
 		svc.Username = user
+		svc.DataDir = bindSource
 
 		if err := svc.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
@@ -482,6 +519,7 @@ func init() {
 	postgresCreateCmd.Flags().String("database", "", "Initial database name")
 	postgresCreateCmd.Flags().String("user", "", "Initial user name")
 	postgresCreateCmd.Flags().String("password", "", "User password")
+	postgresCreateCmd.Flags().String("data-dir", "", "Host directory to store database data (optional)")
 
 	postgresUsersCreateCmd.Flags().String("password", "", "User password")
 	postgresUsersCreateCmd.Flags().String("database", "", "Database to grant access to")
