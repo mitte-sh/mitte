@@ -212,6 +212,12 @@ mitte apps set-buildpack <appname> <buildpack-id>
 # Detect and suggest a buildpack for an application
 mitte apps detect-buildpack <appname>
 
+# Enable an application
+mitte apps enable <appname>
+
+# Disable an application
+mitte apps disable <appname>
+
 # Permanently destroy an application and all its resources
 mitte apps destroy <appname>
 ```

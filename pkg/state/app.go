@@ -23,6 +23,7 @@ type App struct {
 	HostPort      string            `json:"host_port,omitempty"`      // Current host port for routing
 	Command       []string          `json:"command,omitempty"`        // Custom entrypoint/command
 	User          string            `json:"user,omitempty"`           // Custom user to run as
+	Disabled      bool              `json:"disabled,omitempty"`       // Whether the app is disabled
 }
 
 func Load(appName string) (*App, error) {

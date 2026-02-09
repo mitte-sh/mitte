@@ -164,6 +164,20 @@ Example: mitte apps set-user myapp 1000:1000`,
 	Run:  runAppsSetUser,
 }
 
+var appsEnableCmd = &cobra.Command{
+	Use:   "enable <app-name>",
+	Short: "Enable an application",
+	Args:  cobra.ExactArgs(1),
+	Run:   runAppsEnable,
+}
+
+var appsDisableCmd = &cobra.Command{
+	Use:   "disable <app-name>",
+	Short: "Disable an application",
+	Args:  cobra.ExactArgs(1),
+	Run:   runAppsDisable,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
 	appsCmd.AddCommand(appsCreateCmd)
@@ -177,6 +191,8 @@ func init() {
 	appsCmd.AddCommand(appsDetectBuildpackCmd)
 	appsCmd.AddCommand(appsSetCommandCmd)
 	appsCmd.AddCommand(appsSetUserCmd)
+	appsCmd.AddCommand(appsEnableCmd)
+	appsCmd.AddCommand(appsDisableCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -221,22 +237,30 @@ func runAppsList(cmd *cobra.Command, args []string) {
 			urls = "error"
 		} else {
 			urls = strings.Join(appState.Domains, ", ")
+			if appState.Disabled {
+				status = "disabled"
+			}
 		}
 
-		inspect, err := cli.ContainerInspect(context.Background(), appName)
-		if err != nil {
-			if errdefs.IsNotFound(err) {
-				status = "stopped"
-				created = "-"
-				imageTag = "(no image)"
+		if status != "disabled" {
+			inspect, err := cli.ContainerInspect(context.Background(), appName)
+			if err != nil {
+				if errdefs.IsNotFound(err) {
+					status = "stopped"
+					created = "-"
+					imageTag = "(no image)"
+				} else {
+					status = "error"
+				}
 			} else {
-				status = "error"
+				status = inspect.State.Status
+				imageTag = filepath.Base(inspect.Config.Image)
+				createdTime, _ := time.Parse(time.RFC3339Nano, inspect.Created)
+				created = formatTimeAgo(createdTime)
 			}
 		} else {
-			status = inspect.State.Status
-			imageTag = filepath.Base(inspect.Config.Image)
-			createdTime, _ := time.Parse(time.RFC3339Nano, inspect.Created)
-			created = formatTimeAgo(createdTime)
+			created = "-"
+			imageTag = "-"
 		}
 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", appName, status, created, imageTag, urls)
@@ -418,8 +442,26 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist or has no domains.\n", appName)
+		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
 		os.Exit(1)
+	}
+
+	// Enable the app if it was disabled
+	if app.Disabled {
+		fmt.Fprintf(os.Stderr, "-----> App was disabled, enabling it for deployment...\n")
+		app.Disabled = false
+		if err := app.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Could not save app state: %v\n", err)
+		}
+	}
+
+	// Enable the app if it was disabled
+	if app.Disabled {
+		fmt.Fprintf(os.Stderr, "-----> App was disabled, enabling it for build...\n")
+		app.Disabled = false
+		if err := app.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Could not save app state: %v\n", err)
+		}
 	}
 
 	// 2. Check if git repo exists
@@ -994,4 +1036,93 @@ func runAppsSetUser(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Success! App '%s' is now configured to run as user: %s\n", appName, user)
 	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+}
+
+func runAppsEnable(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !app.Disabled {
+		fmt.Printf("App '%s' is already enabled.\n", appName)
+		return
+	}
+
+	app.Disabled = false
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not save app state: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("App '%s' enabled. Starting deployment...\n", appName)
+
+	// Determine what to deploy
+	imageToDeploy := app.Image
+	if imageToDeploy == "" {
+		// Try to find the latest built image
+		latestImage, err := deployer.GetLatestImageForApp(ctx, appName)
+		if err == nil {
+			imageToDeploy = latestImage
+		} else {
+			// Fallback to placeholder if nothing else
+			imageToDeploy = placeholderImage
+		}
+	}
+
+	// Deploy
+	deployResult, err := deployer.Deploy(ctx, appName, imageToDeploy, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	app.HostPort = deployResult.HostPort
+	app.Save()
+
+	// Update routes
+	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Success! App '%s' is now enabled and running.\n", appName)
+}
+
+func runAppsDisable(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		os.Exit(1)
+	}
+
+	if app.Disabled {
+		fmt.Printf("App '%s' is already disabled.\n", appName)
+		return
+	}
+
+	app.Disabled = true
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not save app state: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Stop and remove container
+	if err := deployer.StopAndRemoveContainer(ctx, appName, app.ContainerName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not stop container: %v\n", err)
+	}
+
+	// Remove routes
+	if err := router.DeleteRouteFile(appName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not remove routes: %v\n", err)
+	}
+
+	fmt.Printf("Success! App '%s' is now disabled.\n", appName)
 }
