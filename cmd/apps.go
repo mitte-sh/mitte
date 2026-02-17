@@ -106,6 +106,22 @@ Examples:
 	Run:  runAppsSetPorts,
 }
 
+var appsListVolumesCmd = &cobra.Command{
+	Use:     "list-volumes <app-name>",
+	Short:   "List volume mounts for an application",
+	Aliases: []string{"volumes"},
+	Args:    cobra.ExactArgs(1),
+	Run:     runAppsListVolumes,
+}
+
+var appsListPortsCmd = &cobra.Command{
+	Use:     "list-ports <app-name>",
+	Short:   "List port mappings for an application",
+	Aliases: []string{"ports"},
+	Args:    cobra.ExactArgs(1),
+	Run:     runAppsListPorts,
+}
+
 var appsDeployImageCmd = &cobra.Command{
 	Use:   "deploy-image <app-name>",
 	Short: "Deploy an application using a pre-built Docker image",
@@ -185,7 +201,9 @@ func init() {
 	appsCmd.AddCommand(appsBuildCmd)
 	appsCmd.AddCommand(appsSetImageCmd)
 	appsCmd.AddCommand(appsSetVolumesCmd)
+	appsCmd.AddCommand(appsListVolumesCmd)
 	appsCmd.AddCommand(appsSetPortsCmd)
+	appsCmd.AddCommand(appsListPortsCmd)
 	appsCmd.AddCommand(appsDeployImageCmd)
 	appsCmd.AddCommand(appsSetBuildpackCmd)
 	appsCmd.AddCommand(appsDetectBuildpackCmd)
@@ -1125,4 +1143,52 @@ func runAppsDisable(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("Success! App '%s' is now disabled.\n", appName)
+}
+
+func runAppsListVolumes(cmd *cobra.Command, args []string) {
+	appName, err := state.ResolveAppName(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	if len(app.Volumes) == 0 {
+		fmt.Printf("No volumes mounted for app '%s'.\n", appName)
+		return
+	}
+
+	fmt.Printf("Volume mounts for app '%s':\n", appName)
+	for i, volume := range app.Volumes {
+		fmt.Printf("  %d. %s\n", i+1, volume)
+	}
+}
+
+func runAppsListPorts(cmd *cobra.Command, args []string) {
+	appName, err := state.ResolveAppName(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	if len(app.Ports) == 0 {
+		fmt.Printf("No port mappings for app '%s'.\n", appName)
+		return
+	}
+
+	fmt.Printf("Port mappings for app '%s':\n", appName)
+	for i, port := range app.Ports {
+		fmt.Printf("  %d. %s\n", i+1, port)
+	}
 }

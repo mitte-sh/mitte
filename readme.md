@@ -200,8 +200,14 @@ mitte apps set-image <appname> <image>
 # Configure volume mounts for an app
 mitte apps set-volumes <appname> /host/path:/container/path
 
+# List volume mounts for an app
+mitte apps list-volumes <appname>
+
 # Configure port mappings for an app
 mitte apps set-ports <appname> 8080:80
+
+# List port mappings for an app
+mitte apps list-ports <appname>
 
 # Configure a custom command/entrypoint for an app
 mitte apps set-command <appname> serve --port 8080
@@ -475,18 +481,15 @@ mitte postgres destroy <instance-name>
 **Connection Pooling Commands in Detail**:
 
 1. **`mitte mariadb connections stats <instance-name>`**
-
    - Shows current connection statistics without analysis
    - Displays: Max Connections, Threads Connected, Threads Running, Threads Cached, Threads Created, Connection Usage %, Connection Churn
 
 2. **`mitte mariadb connections analyze <instance-name>`**
-
    - Analyzes connection usage and provides recommendations
    - Identifies: High connection usage, connection churn issues, long-running queries
    - Suggests configuration improvements based on current usage patterns
 
 3. **`mitte mariadb connections optimize <instance-name> [--preset]`**
-
    - Generates optimized configuration based on current usage or specified preset
    - Auto-detects container memory limits for optimal buffer pool sizing
    - Provides configuration that can be saved to a file and applied

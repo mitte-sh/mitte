@@ -87,7 +87,9 @@
 ### Advanced Configuration
 
 - `mitte apps set-volumes <app> <volume>...` - Set volume mounts (host:container[:options])
+- `mitte apps list-volumes <app>` - List volume mounts for an app
 - `mitte apps set-ports <app> <port>...` - Set port mappings (host:container)
+- `mitte apps list-ports <app>` - List port mappings for an app
 - `mitte apps set-command <app> <command>...` - Set custom entrypoint/command
 - `mitte apps set-user <app> <user>` - Set custom user (UID:GID) to run the container
 
