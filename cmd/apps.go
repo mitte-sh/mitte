@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/mitte-sh/mitte/pkg/actions"
 	"github.com/mitte-sh/mitte/pkg/builder"
 	"github.com/mitte-sh/mitte/pkg/config"
 	"github.com/mitte-sh/mitte/pkg/deployer"
@@ -104,6 +106,19 @@ Examples:
   mitte apps set-ports myapp 8443:443 8080:8080`,
 	Args: cobra.MinimumNArgs(2),
 	Run:  runAppsSetPorts,
+}
+
+var appsUnsetPortsCmd = &cobra.Command{
+	Use:   "unset-ports <app-name> [port...]",
+	Short: "Unset port mappings for an application",
+	Long: `Unset port mappings for an application.
+Ports are specified as host:container pairs.
+Use the --all flag to remove all port mappings.
+By default, the application is redeployed to apply changes. Use the --no-restart flag to prevent this.
+Examples:
+  mitte apps unset-ports myapp 8080:80
+  mitte apps unset-ports myapp --all`,
+	Run: runAppsUnsetPorts,
 }
 
 var appsListVolumesCmd = &cobra.Command{
@@ -202,7 +217,14 @@ func init() {
 	appsCmd.AddCommand(appsSetImageCmd)
 	appsCmd.AddCommand(appsSetVolumesCmd)
 	appsCmd.AddCommand(appsListVolumesCmd)
+
+	appsSetPortsCmd.Flags().Bool("no-restart", false, "Set the ports without restarting the application")
 	appsCmd.AddCommand(appsSetPortsCmd)
+
+	appsUnsetPortsCmd.Flags().Bool("all", false, "Remove all port mappings")
+	appsUnsetPortsCmd.Flags().Bool("no-restart", false, "Unset the ports without restarting the application")
+	appsCmd.AddCommand(appsUnsetPortsCmd)
+
 	appsCmd.AddCommand(appsListPortsCmd)
 	appsCmd.AddCommand(appsDeployImageCmd)
 	appsCmd.AddCommand(appsSetBuildpackCmd)
@@ -703,6 +725,8 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	portArgs := args[1:]
 
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
 	// Validate that we have at least one port
 	if len(portArgs) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: At least one port mapping is required\n")
@@ -775,7 +799,78 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 	for i, port := range ports {
 		fmt.Printf("  %d. %s\n", i+1, port)
 	}
-	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+
+	if !noRestart {
+		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Ports updated for '%s'. The application is now restarting.\n", appName)
+	} else {
+		fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+	}
+}
+
+func runAppsUnsetPorts(cmd *cobra.Command, args []string) {
+	if len(args) < 1 {
+		cmd.Help()
+		os.Exit(1)
+	}
+	appName := args[0]
+	portArgs := args[1:]
+
+	removeAll, _ := cmd.Flags().GetBool("all")
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+	if len(portArgs) == 0 && !removeAll {
+		fmt.Fprintf(os.Stderr, "Error: At least one port mapping is required, or use --all\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Unsetting ports for app '%s'... ", appName)
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist.\n", appName)
+		os.Exit(1)
+	}
+
+	if removeAll {
+		app.Ports = []string{}
+	} else {
+		var newPorts []string
+		for _, existingPort := range app.Ports {
+			if slices.Contains(portArgs, existingPort) {
+				continue
+			}
+			newPorts = append(newPorts, existingPort)
+		}
+		app.Ports = newPorts
+	}
+
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	if !noRestart {
+		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Ports updated for '%s'. The application is now restarting.\n", appName)
+	} else {
+		fmt.Println("To deploy the app with the updated ports, run: mitte apps deploy-image", appName)
+	}
 }
 
 func runAppsDeployImage(cmd *cobra.Command, args []string) {
