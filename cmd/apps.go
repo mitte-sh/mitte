@@ -95,6 +95,19 @@ Examples:
 	Run:  runAppsSetVolumes,
 }
 
+var appsUnsetVolumesCmd = &cobra.Command{
+	Use:   "unset-volumes <app-name> [volume...]",
+	Short: "Unset volume mounts for an application",
+	Long: `Unset volume mounts for an application.
+Volumes are specified as host:container pairs.
+Use the --all flag to remove all volume mounts.
+By default, the application is redeployed to apply changes. Use the --no-restart flag to prevent this.
+Examples:
+  mitte apps unset-volumes myapp /host/path:/container/path
+  mitte apps unset-volumes myapp --all`,
+	Run: runAppsUnsetVolumes,
+}
+
 var appsSetPortsCmd = &cobra.Command{
 	Use:   "set-ports <app-name> <port>...",
 	Short: "Set port mappings for an application",
@@ -215,7 +228,14 @@ func init() {
 	appsCmd.AddCommand(appsDestroyCmd)
 	appsCmd.AddCommand(appsBuildCmd)
 	appsCmd.AddCommand(appsSetImageCmd)
+
+	appsSetVolumesCmd.Flags().Bool("no-restart", false, "Set the volumes without restarting the application")
 	appsCmd.AddCommand(appsSetVolumesCmd)
+
+	appsUnsetVolumesCmd.Flags().Bool("all", false, "Remove all volume mounts")
+	appsUnsetVolumesCmd.Flags().Bool("no-restart", false, "Unset the volumes without restarting the application")
+	appsCmd.AddCommand(appsUnsetVolumesCmd)
+
 	appsCmd.AddCommand(appsListVolumesCmd)
 
 	appsSetPortsCmd.Flags().Bool("no-restart", false, "Set the ports without restarting the application")
@@ -652,6 +672,8 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	volumeArgs := args[1:]
 
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
 	// Validate that we have at least one volume
 	if len(volumeArgs) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: At least one volume mapping is required\n")
@@ -718,7 +740,78 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 	for i, volume := range volumes {
 		fmt.Printf("  %d. %s\n", i+1, volume)
 	}
-	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+
+	if !noRestart {
+		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Volumes updated for '%s'. The application is now restarting.\n", appName)
+	} else {
+		fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+	}
+}
+
+func runAppsUnsetVolumes(cmd *cobra.Command, args []string) {
+	if len(args) < 1 {
+		cmd.Help()
+		os.Exit(1)
+	}
+	appName := args[0]
+	volumeArgs := args[1:]
+
+	removeAll, _ := cmd.Flags().GetBool("all")
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+	if len(volumeArgs) == 0 && !removeAll {
+		fmt.Fprintf(os.Stderr, "Error: At least one volume mapping is required, or use --all\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Unsetting volumes for app '%s'... ", appName)
+
+	app, err := state.Load(appName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		os.Exit(1)
+	}
+
+	if len(app.Domains) == 0 {
+		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist.\n", appName)
+		os.Exit(1)
+	}
+
+	if removeAll {
+		app.Volumes = []string{}
+	} else {
+		var newVolumes []string
+		for _, existingVolume := range app.Volumes {
+			if slices.Contains(volumeArgs, existingVolume) {
+				continue
+			}
+			newVolumes = append(newVolumes, existingVolume)
+		}
+		app.Volumes = newVolumes
+	}
+
+	if err := app.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "done.")
+
+	if !noRestart {
+		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Volumes updated for '%s'. The application is now restarting.\n", appName)
+	} else {
+		fmt.Println("To deploy the app with the updated volumes, run: mitte apps deploy-image", appName)
+	}
 }
 
 func runAppsSetPorts(cmd *cobra.Command, args []string) {
