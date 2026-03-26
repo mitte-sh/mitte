@@ -88,7 +88,12 @@ Use this after Docker daemon restart or when Caddy shows "connection refused" er
 
 			// Update Caddy route
 			if len(app.Domains) > 0 {
-				if err := router.SetAppRoutes(appName, app.Domains, currentPort); err != nil {
+				authEnabled := app.Auth != nil && app.Auth.Enabled
+				authPolicy := ""
+				if authEnabled {
+					authPolicy = app.Auth.Policy
+				}
+				if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy); err != nil {
 					fmt.Fprintf(os.Stderr, "  !! Error: Could not update Caddy route: %v\n", err)
 				} else {
 					fmt.Fprintf(os.Stderr, "  ✓ Updated Caddy route to port %s\n", currentPort)

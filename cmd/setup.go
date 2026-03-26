@@ -87,7 +87,19 @@ command that should be run on a fresh server.`,
 		fmt.Println("\n-- Installing Container Watcher Service --")
 		installContainerWatcher()
 
-		// --- 13. Final Steps ---
+		// --- 13. Optional: Set up Authentication ---
+		fmt.Println("\n-- Optional: Authentication Service --")
+		fmt.Print("Do you want to set up the authentication service? (y/N): ")
+		reader := bufio.NewReader(os.Stdin)
+		setupAuth, _ := reader.ReadString('\n')
+		setupAuth = strings.TrimSpace(strings.ToLower(setupAuth))
+		if setupAuth == "y" || setupAuth == "yes" {
+			fmt.Println("Run 'mitte auth setup' as the mitte user to configure authentication.")
+		} else {
+			fmt.Println("Skipping authentication setup. You can run 'mitte auth setup' later.")
+		}
+
+		// --- 14. Final Steps ---
 		fmt.Println("\n-- Finalizing --")
 		installMitteBinary()
 

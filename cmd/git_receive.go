@@ -276,22 +276,15 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 
 	// --- 8. Update the routing layer ---
-	// Check if route exists
-	exists, err := router.RouteExistsFile(appName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n!! Routing check failed: %v\n", err)
+	// Use SetAppRoutesWithAuth which handles both creating and updating routes
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
 	}
-
-	if exists {
-		fmt.Fprintf(os.Stderr, "-----> Updating existing route\n")
-		if err := router.CreateRouteFile(appName, deployResult.HostPort); err != nil {
-			fmt.Fprintf(os.Stderr, "\n!! Routing update failed: %v\n", err)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "-----> Creating new route\n")
-		if err := router.CreateRouteFile(appName, deployResult.HostPort); err != nil {
-			fmt.Fprintf(os.Stderr, "\n!! Routing creation failed: %v\n", err)
-		}
+	fmt.Fprintf(os.Stderr, "-----> Updating routes\n")
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+		fmt.Fprintf(os.Stderr, "\n!! Routing update failed: %v\n", err)
 	}
 
 	// --- Step 9: Final Success Message ---

@@ -392,7 +392,12 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 
 	// --- 5. Route traffic ---
 	fmt.Fprintln(os.Stderr, "Routing traffic...")
-	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
+	}
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Could not update routes: %v\n", err)
 		// Don't exit here, the app is running, just not routable.
 	}
@@ -599,7 +604,12 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 
 	// 10. Update routes
 	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
-	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
+	}
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
 		os.Exit(1)
 	}
@@ -1040,7 +1050,12 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 
 	// 5. Update routes
 	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
-	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
+	}
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
 		os.Exit(1)
 	}
@@ -1291,7 +1306,12 @@ func runAppsEnable(cmd *cobra.Command, args []string) {
 	app.Save()
 
 	// Update routes
-	if err := router.SetAppRoutes(appName, app.Domains, deployResult.HostPort); err != nil {
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
+	}
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
 		os.Exit(1)
 	}

@@ -48,5 +48,10 @@ func RestartApp(appName string) error {
 	}
 
 	// 3. Update the router to point the app's domains to the new container's port.
-	return router.SetAppRoutes(appName, appState.Domains, deployResult.HostPort)
+	authEnabled := appState.Auth != nil && appState.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = appState.Auth.Policy
+	}
+	return router.SetAppRoutesWithAuth(appName, appState.Domains, deployResult.HostPort, authEnabled, authPolicy)
 }

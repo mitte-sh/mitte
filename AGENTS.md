@@ -105,6 +105,17 @@
 - `mitte config list <app>` - List current environment variables
 - `mitte config edit <app>` - Bulk edit environment variables in an editor (preserves comments and order)
 
+### Authentication (Authelia)
+
+- `mitte auth setup` - Set up the Authelia authentication service
+- `mitte auth enable <app>` - Enable auth protection for an app (use `--two-factor` for 2FA)
+- `mitte auth disable <app>` - Disable auth protection for an app
+- `mitte auth status <app>` - Show auth status for an app
+- `mitte auth info` - Show Authelia service status and configured users
+- `mitte auth add-user <username>` - Add a new user (interactive)
+- `mitte auth remove-user <username>` - Remove a user
+- `mitte auth list-users` - List all configured users
+
 ## Implementation Details
 
 ### State Management

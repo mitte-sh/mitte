@@ -82,7 +82,12 @@ var domainsAddCmd = &cobra.Command{
 		}
 
 		// Update the router with the new full list of domains
-		if err := router.SetAppRoutes(appName, app.Domains, port); err != nil {
+		authEnabled := app.Auth != nil && app.Auth.Enabled
+		authPolicy := ""
+		if authEnabled {
+			authPolicy = app.Auth.Policy
+		}
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to set routes for '%s': %v\n", appName, err)
 			os.Exit(1)
 		}
@@ -160,7 +165,12 @@ var domainsRemoveCmd = &cobra.Command{
 		}
 
 		// Update the router with the new list.
-		if err := router.SetAppRoutes(appName, app.Domains, port); err != nil {
+		authEnabled := app.Auth != nil && app.Auth.Enabled
+		authPolicy := ""
+		if authEnabled {
+			authPolicy = app.Auth.Policy
+		}
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Failed to set routes for '%s': %v\n", appName, err)
 			os.Exit(1)
 		}

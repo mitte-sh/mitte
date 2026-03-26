@@ -25,6 +25,13 @@ type App struct {
 	Command       []string          `json:"command,omitempty"`        // Custom entrypoint/command
 	User          string            `json:"user,omitempty"`           // Custom user to run as
 	Disabled      bool              `json:"disabled,omitempty"`       // Whether the app is disabled
+	Auth          *AuthConfig       `json:"auth,omitempty"`           // Auth protection config
+}
+
+// AuthConfig holds authentication settings for an app.
+type AuthConfig struct {
+	Enabled bool   `json:"enabled"`
+	Policy  string `json:"policy"` // "one_factor" or "two_factor"
 }
 
 func Load(appName string) (*App, error) {

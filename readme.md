@@ -16,6 +16,7 @@ Using the power of Docker, Git, and Caddy, `mitte` provides a simple, self-hoste
 - 🐘 **PostgreSQL Support**: Built-in PostgreSQL database service with health checks, backup/restore, and user management.
 - 🔄 **Automatic Route Recovery**: Container watcher service automatically fixes Caddy routes after Docker restarts.
 - 🛠️ **Route Management Tools**: Commands to manually fix broken routes and manage the watcher service.
+- 🔐 **Application Authentication**: Protect apps with Authelia — password, 2FA, SSO across all your apps.
 
 ### How It Works
 
@@ -178,6 +179,77 @@ Mitte can automatically detect and build applications in:
 - **Ruby** (`Gemfile`)
 - **PHP** (`composer.json`)
 
+### 🔐 Application Authentication
+
+Mitte includes built-in authentication powered by [Authelia](https://www.authelia.com/). This lets you protect any application — even ones that don't have their own login system — with password authentication, two-factor authentication (TOTP), and single sign-on across all your apps.
+
+**How it works:**
+
+When auth is enabled for an app, Caddy intercepts every request and checks with the Authelia service whether the user is authenticated. If not, they're redirected to a login portal at `auth.<your-domain>`. Once logged in, the session is shared across all protected apps.
+
+```
+User Browser → Caddy (forward_auth) → Authelia → App Container
+                       ↓ (if not authenticated)
+                  Redirect to login portal
+```
+
+**1. Set Up Authentication**
+
+```bash
+# Run once to install and configure Authelia
+mitte auth setup
+
+# Re-run setup (e.g. if initial setup failed)
+mitte auth setup --force
+
+# This will:
+# - Pull the Authelia Docker image
+# - Generate configuration and secrets
+# - Create a login portal route at auth.your-domain.com
+# - Prompt you to create your first admin user
+```
+
+**2. Protect an App**
+
+```bash
+# Enable password authentication for an app
+mitte auth enable myapp
+
+# Enable two-factor authentication (requires TOTP app like Google Authenticator)
+mitte auth enable myapp --two-factor
+
+# Disable authentication
+mitte auth disable myapp
+
+# Check auth status for an app
+mitte auth status myapp
+```
+
+**3. Manage Users**
+
+```bash
+# Add a new user (interactive — prompts for email and password)
+mitte auth add-user hector
+
+# List all users
+mitte auth list-users
+
+# Remove a user
+mitte auth remove-user hector
+
+# Show Authelia service info and all users
+mitte auth info
+```
+
+**Features:**
+
+- **Single sign-on**: Log in once, access all protected apps.
+- **Two-factor auth**: Optional TOTP support for extra security.
+- **Per-app policies**: Each app can have its own auth policy — password only (`one_factor`) or password + 2FA (`two_factor`).
+- **Per-app control**: Enable or disable auth for each app independently.
+- **Self-hosted**: No third-party auth providers needed. All data stays on your server.
+- **Login portal**: Clean, self-hosted login UI at `auth.<your-domain>`.
+
 ### 📖 Command Reference
 
 Mitte comes with a powerful command-line interface to manage all aspects of your applications. All commands are run on your server (e.g., by running `ssh root@your-server.com "mitte <command>"`).
@@ -254,6 +326,39 @@ mitte config unset <appname> SECRET_KEY
 # Bulk edit environment variables in a text editor
 # This method preserves comments and the order of variables
 mitte config edit <appname>
+```
+
+#### Authentication
+
+Manage application authentication via Authelia. Each app can have its own auth policy.
+
+```bash
+# Set up the authentication service (run once)
+mitte auth setup
+
+# Enable auth for an app (password only — one_factor)
+mitte auth enable <appname>
+
+# Enable auth with two-factor authentication (requires TOTP — two_factor)
+mitte auth enable <appname> --two-factor
+
+# Disable auth for an app
+mitte auth disable <appname>
+
+# Show auth status and policy for an app
+mitte auth status <appname>
+
+# Show Authelia service info and configured users
+mitte auth info
+
+# Add a user (interactive)
+mitte auth add-user <username>
+
+# Remove a user
+mitte auth remove-user <username>
+
+# List all users
+mitte auth list-users
 ```
 
 #### Domain Management

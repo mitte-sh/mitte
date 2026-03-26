@@ -1,6 +1,6 @@
 module github.com/mitte-sh/mitte
 
-go 1.24.6
+go 1.25.0
 
 require (
 	github.com/buildpacks/lifecycle v0.20.16
@@ -11,6 +11,7 @@ require (
 	github.com/moby/moby v28.3.3+incompatible
 	github.com/moby/term v0.5.2
 	github.com/spf13/cobra v1.10.1
+	golang.org/x/crypto v0.49.0
 )
 
 require (
@@ -49,8 +50,7 @@ require (
 	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
-	golang.org/x/net v0.45.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gotest.tools/v3 v3.5.1 // indirect
 )
