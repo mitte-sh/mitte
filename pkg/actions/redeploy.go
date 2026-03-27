@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/mitte-sh/mitte/pkg/deployer"
 	"github.com/mitte-sh/mitte/pkg/router"
@@ -38,6 +39,12 @@ func RestartApp(appName string) error {
 	deployResult, err := deployer.Deploy(ctx, appName, imageTag, appState.Volumes, appState.Ports, appState.ContainerName, appState.Command, appState.User)
 	if err != nil {
 		return err
+	}
+
+	// Save the new host port to state
+	appState.HostPort = deployResult.HostPort
+	if err = appState.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save host port: %v\n", err)
 	}
 
 	// 3. Update the router to point the app's domains to the new container's port.

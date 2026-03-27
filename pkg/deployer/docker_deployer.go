@@ -187,7 +187,37 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	// --- 3. Start the container ---
 	fmt.Fprintf(os.Stderr, "-----> Starting container %s\n", createResp.ID[:12])
 	if err = cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
-		return nil, fmt.Errorf("failed to start container: %w", err)
+		// If the error is due to port already allocated, retry with a random port
+		if isPortAllocatedError(err) {
+			fmt.Fprintf(os.Stderr, "-----> Previous port is already in use, retrying with a random port...\n")
+
+			// Remove the failed container
+			_ = cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
+
+			// Reset port bindings to use random ports
+			for port := range portBindings {
+				portBindings[port] = []nat.PortBinding{
+					{
+						HostIP:   "0.0.0.0",
+						HostPort: "",
+					},
+				}
+			}
+			hostConfig.PortBindings = portBindings
+
+			// Recreate and start
+			createResp, err = cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, actualContainerName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create container on retry: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "-----> Starting container %s\n", createResp.ID[:12])
+			if err = cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
+				return nil, fmt.Errorf("failed to start container: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to start container: %w", err)
+		}
 	}
 
 	// --- 4. Get the host port using our helper function ---
@@ -242,6 +272,14 @@ func GetContainerHostPort(ctx context.Context, cli *client.Client, containerIDOr
 	// 3. If we finish the loop and find nothing, the container has no exposed ports.
 	return "", fmt.Errorf("container '%s' is running, but no exposed ports were found to be mapped to the host", containerIDOrName)
 
+}
+
+// isPortAllocatedError checks if an error is due to a port already being allocated
+func isPortAllocatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "port is already allocated")
 }
 
 // getExposedPorts inspects a Docker image and returns its exposed ports
