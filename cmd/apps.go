@@ -23,6 +23,7 @@ import (
 	"github.com/mitte-sh/mitte/pkg/builder"
 	"github.com/mitte-sh/mitte/pkg/config"
 	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/registry"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -1021,7 +1022,27 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	if err != nil {
 		// Image doesn't exist locally, pull it
 		fmt.Fprintf(os.Stderr, "-----> Pulling image '%s'...\n", app.Image)
-		reader, err := cli.ImagePull(ctx, app.Image, image.PullOptions{})
+
+		// Create auth resolver for private registries
+		authResolver := registry.DefaultResolver()
+
+		// Get auth config for this image
+		authConfig, err := authResolver.GetAuthConfigForImage(app.Image)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Could not get registry auth: %v\n", err)
+		}
+
+		pullOpts := image.PullOptions{}
+
+		// If we have auth config, encode it for the pull
+		if authConfig != nil && (authConfig.Username != "" || authConfig.Password != "") {
+			authHeader, err := registry.EncodeRegistryAuth(authConfig)
+			if err == nil {
+				pullOpts.RegistryAuth = authHeader
+			}
+		}
+
+		reader, err := cli.ImagePull(ctx, app.Image, pullOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Could not pull image '%s': %v\n", app.Image, err)
 			os.Exit(1)

@@ -138,6 +138,27 @@ git push mitte main
 
 The system will detect the pre-built image configuration and deploy it directly without building.
 
+**3. Using Private Registries**
+
+Mitte supports pulling images from any Docker-compatible registry (Docker Hub, GitHub Container Registry, GitLab, private registries, etc.). Authentication credentials are automatically resolved from `~/.docker/config.json`.
+
+```bash
+# Add credentials for a private registry
+ssh root@your-server.com "mitte registries add ghcr.io <username> <token>"
+
+# List configured registries
+ssh root@your-server.com "mitte registries list"
+
+# Remove registry credentials
+ssh root@your-server.com "mitte registries remove ghcr.io"
+
+# Now you can deploy private images
+ssh root@your-server.com "mitte apps set-image myapp ghcr.io/username/private-image:latest"
+ssh root@your-server.com "mitte apps deploy-image myapp"
+```
+
+> **Note**: Registry credentials are stored in the same `~/.docker/config.json` file used by the `docker login` command. Credentials added via `docker login` will also be available to Mitte.
+
 ### 📦 Deploying with Buildpacks
 
 Mitte supports deploying applications using Cloud Native Buildpacks (CNB), which automatically detect your application's language and framework, eliminating the need for a `Dockerfile`. This is perfect for standard applications in popular languages.
@@ -360,6 +381,24 @@ mitte auth remove-user <username>
 # List all users
 mitte auth list-users
 ```
+
+#### Registry Credentials
+
+Manage Docker registry credentials for pulling private images.
+
+```bash
+# Add credentials for a Docker registry
+mitte registries add <registry> <username> <password>
+# Example: mitte registries add ghcr.io myuser ghp_xxx
+
+# List configured registry credentials
+mitte registries list
+
+# Remove credentials for a registry
+mitte registries remove <registry>
+```
+
+> **Note**: Mitte reads credentials from the standard Docker configuration file (`~/.docker/config.json`). Credentials configured via `docker login` are automatically available too.
 
 #### Domain Management
 

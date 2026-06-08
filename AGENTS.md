@@ -84,6 +84,14 @@
 - `mitte apps set-image <app> <image>` - Set pre-built Docker image for an app
 - `mitte apps deploy-image <app>` - Deploy an app using the configured pre-built image
 
+**Registry Support**: Pre-built images can be pulled from any registry (Docker Hub, GHCR, private registries). Authentication is automatically resolved from `~/.docker/config.json`.
+
+### Registry Credentials
+
+- `mitte registries add <registry> <username> <password>` - Add credentials for a Docker registry
+- `mitte registries remove <registry>` - Remove credentials for a registry
+- `mitte registries list` - List configured registry credentials
+
 ### Advanced Configuration
 
 - `mitte apps set-volumes <app> <volume>...` - Set volume mounts (host:container[:options])
