@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 var setupCmd = &cobra.Command{
@@ -25,87 +26,87 @@ command that should be run on a fresh server.`,
 		versionControlSystem := "git"
 
 		// --- 1. Pre-flight Checks ---
-		fmt.Println("🚀 Starting mitte setup...")
+		logger.Info("🚀 Starting mitte setup...")
 		if os.Geteuid() != 0 {
-			fmt.Println("Error: 'mitte setup' must be run as root or with sudo.")
+			logger.Error("Error: 'mitte setup' must be run as root or with sudo.")
 			os.Exit(1)
 		}
 
 		// --- 2. Install OS Updates ---
-		fmt.Println("\n-- Installing OS Updates --")
+		logger.Info("-- Installing OS Updates --")
 		installOSUpdate()
 
 		// --- 3. Install Container Runtime ---
-		fmt.Println("\n-- Installing Container Runtime --")
+		logger.Info("-- Installing Container Runtime --")
 		installContainerRuntime(containerizationPlatform)
 
 		// --- 4. Create 'mitte' User and Environment ---
-		fmt.Println("\n-- Configuring 'mitte' user and environment --")
+		logger.Info("-- Configuring 'mitte' user and environment --")
 		createUser()
 
 		// --- 5. Configure SSH ---
-		fmt.Println("\n-- Configuring SSH for git push deployments --")
+		logger.Info("-- Configuring SSH for git push deployment --")
 		configureSSH()
 
 		// --- 6. Install and Configure Reverse Proxy ---
-		fmt.Println("\n-- Installing and configuring Reverse Proxy --")
+		logger.Info("-- Installing and configuring Reverse Proxy --")
 		installReverseProxy(selectedProxy)
 		configureReverseProxy(selectedProxy)
 
 		// --- 7. Configure Sudoers ---
-		fmt.Println("\n-- Configuring sudoers for 'mitte' user --")
+		logger.Info("-- Configuring sudoers for 'mitte' user --")
 		configureSudoers()
 
 		// --- 8. Install Version Control System ---
-		fmt.Println("\n-- Installing Version Control System --")
+		logger.Info("-- Installing Version Control System --")
 		installVersionControlSystem(versionControlSystem)
 
 		// --- 9. Install Buildpack CLI ---
-		fmt.Println("\n-- Installing Buildpack CLI (pack) --")
+		logger.Info("-- Installing Buildpack CLI (pack) --")
 		installBuildpackCLI()
 
 		// --- 10. Configure Base Domain ---
-		fmt.Println("\n-- Configuring Base Domain --")
+		logger.Info("-- Configuring Base Domain --")
 		if err := configureBaseDomain(); err != nil {
-			log.Fatalf("Error configuring base domain: %v", err)
+			logger.Fatal("Error configuring base domain", "err", err)
 		}
 
 		// --- 11. Create Mitte's Docker Network ---
-		fmt.Println("\n-- Creating 'mitte' Docker network --")
+		logger.Info("-- Creating 'mitte' Docker network --")
 		err := exec.Command("docker", "network", "inspect", "mitte").Run()
 		if err != nil {
-			fmt.Println("Network 'mitte' not found, creating...")
+			logger.Info("Network 'mitte' not found, creating...")
 			if err := runCommand("docker", "network", "create", "mitte"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create 'mitte' network: %v\n", err)
+				logger.Error("Failed to create 'mitte' network", "err", err)
 				os.Exit(1)
 			}
 		} else {
-			fmt.Println("   Network 'mitte' already exists.")
+			logger.Info("   Network 'mitte' already exists.")
 		}
 
 		// --- 12. Install Container Watcher Service ---
-		fmt.Println("\n-- Installing Container Watcher Service --")
+		logger.Info("-- Installing Container Watcher Service --")
 		installContainerWatcher()
 
 		// --- 13. Optional: Set up Authentication ---
-		fmt.Println("\n-- Optional: Authentication Service --")
+		logger.Info("-- Optional: Authentication Service --")
 		fmt.Print("Do you want to set up the authentication service? (y/N): ")
 		reader := bufio.NewReader(os.Stdin)
 		setupAuth, _ := reader.ReadString('\n')
 		setupAuth = strings.TrimSpace(strings.ToLower(setupAuth))
 		if setupAuth == "y" || setupAuth == "yes" {
-			fmt.Println("Run 'mitte auth setup' as the mitte user to configure authentication.")
+			logger.Info("Run 'mitte auth setup' as the mitte user to configure authentication.")
 		} else {
-			fmt.Println("Skipping authentication setup. You can run 'mitte auth setup' later.")
+			logger.Info("Skipping authentication setup. You can run 'mitte auth setup' later.")
 		}
 
 		// --- 14. Final Steps ---
-		fmt.Println("\n-- Finalizing --")
+		logger.Info("-- Finalizing --")
 		installMitteBinary()
 
-		fmt.Println("\n✅ Mitte setup complete!")
-		fmt.Println("\nYour server is now ready to host applications.")
-		fmt.Println("Next step: Add your SSH key using 'mitte keys add <name>'")
+		logger.Info("✅ Mitte setup complete!")
+		logger.Info("Your server is now ready to host applications.")
+		logger.Info("Next step: Add your SSH key using 'mitte keys add <name>'")
 	},
 }
 
@@ -117,7 +118,7 @@ func getOS() (string, error) {
 	distributionID := ""
 	file, err := os.Open("/etc/os-release")
 	if err != nil {
-		fmt.Println("Error opening file:", err)
+		logger.Error("Error opening file", "err", err)
 		return "", err
 	}
 	defer file.Close()
@@ -129,17 +130,17 @@ func getOS() (string, error) {
 			// Extract the distribution ID
 			distributionID = strings.TrimPrefix(line, "ID=")
 			distributionID = strings.Trim(distributionID, "\"") // Remove quotes
-			fmt.Println("Distribution ID:", distributionID)
+			logger.Info(fmt.Sprintf("Distribution ID: %s", distributionID))
 		} else if strings.HasPrefix(line, "NAME=") {
 			// Extract the distribution name
 			distributionName := strings.TrimPrefix(line, "NAME=")
 			distributionName = strings.Trim(distributionName, "\"") // Remove quotes
-			fmt.Println("Distribution Name:", distributionName)
+			logger.Info(fmt.Sprintf("Distribution Name: %s", distributionName))
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Println("Error reading file:", err)
+		logger.Error("Error reading file", "err", err)
 	}
 
 	return distributionID, nil
@@ -148,28 +149,28 @@ func getOS() (string, error) {
 func installOSUpdate() {
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
 	if osID == "rocky" {
 		if err := runCommand("dnf", "update", "-y"); err != nil {
-			fmt.Println("Error updating dnf:", err)
+			logger.Error("Error updating dnf", "err", err)
 			os.Exit(1)
 		}
 		if err := runCommand("dnf", "install", "-y", "git", "curl", "ca-certificates"); err != nil {
-			fmt.Println("Error installing dependencies:", err)
+			logger.Error("Error installing dependencies", "err", err)
 			os.Exit(1)
 		}
 	}
 
 	if osID == "ubuntu" {
 		if err := runCommand("apt-get", "update"); err != nil {
-			fmt.Println("Error updating apt:", err)
+			logger.Error("Error updating apt", "err", err)
 			os.Exit(1)
 		}
 		if err := runCommand("apt-get", "install", "-y", "git", "curl", "ca-certificates"); err != nil {
-			fmt.Println("Error installing dependencies:", err)
+			logger.Error("Error installing dependencies", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -177,13 +178,13 @@ func installOSUpdate() {
 
 func installContainerRuntime(containerTool string) {
 	if containerTool != "docker" && containerTool != "podman" {
-		fmt.Println("Error: Unsupported container runtime:", containerTool)
+		logger.Error("Unsupported container runtime", "containerTool", containerTool)
 		os.Exit(1)
 	}
 
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
@@ -191,31 +192,31 @@ func installContainerRuntime(containerTool string) {
 		if containerTool == "docker" {
 			// Remove any existing Docker packages to avoid conflicts
 			if err := runCommand("dnf", "remove", "-y", "docker", "docker-client", "docker-client-latest", "docker-common", "docker-latest", "docker-latest-logrotate", "docker-logrotate", "docker-engine", "docker-ce", "docker-ce-cli", "containerd.io"); err != nil {
-				fmt.Println("Warning: Failed to remove existing Docker packages:", err)
+				logger.Warn("Failed to remove existing Docker packages", "err", err)
 			}
 
 			if err := runCommand("dnf", "config-manager", "--add-repo", "https://download.docker.com/linux/centos/docker-ce.repo"); err != nil {
-				fmt.Println("Error adding Docker repository:", err)
+				logger.Error("Error adding Docker repository", "err", err)
 				os.Exit(1)
 			}
 
 			// Clean cache and update to get latest versions
 			if err := runCommand("dnf", "clean", "all"); err != nil {
-				fmt.Println("Warning: Failed to clean DNF cache:", err)
+				logger.Warn("Failed to clean DNF cache", "err", err)
 			}
 
 			if err := runCommand("dnf", "makecache"); err != nil {
-				fmt.Println("Warning: Failed to update DNF cache:", err)
+				logger.Warn("Failed to update DNF cache", "err", err)
 			}
 
 			// Install latest Docker version
 			if err := runCommand("dnf", "install", "-y", "--refresh", "docker-ce", "docker-ce-cli", "containerd.io", "--nobest"); err != nil {
-				fmt.Println("Error installing Docker:", err)
+				logger.Error("Error installing Docker", "err", err)
 				os.Exit(1)
 			}
 
 			if err := runCommand("systemctl", "enable", "--now", "docker"); err != nil {
-				fmt.Println("Error enabling Docker:", err)
+				logger.Error("Error enabling Docker", "err", err)
 				os.Exit(1)
 			}
 		}
@@ -224,17 +225,17 @@ func installContainerRuntime(containerTool string) {
 	if osID == "ubuntu" {
 		if containerTool == "docker" {
 			if err := runCommand("curl", "-fsSL", "https://get.docker.com", "-o", "get-docker.sh"); err != nil {
-				fmt.Println("Error downloading Docker:", err)
+				logger.Error("Error downloading Docker", "err", err)
 				os.Exit(1)
 			}
 
 			if err := runCommand("sh", "get-docker.sh"); err != nil {
-				fmt.Println("Error installing Docker:", err)
+				logger.Error("Error installing Docker", "err", err)
 				os.Exit(1)
 			}
 
 			if err := runCommand("systemctl", "enable", "--now", "docker"); err != nil {
-				fmt.Println("Error enabling Docker:", err)
+				logger.Error("Error enabling Docker", "err", err)
 				os.Exit(1)
 			}
 
@@ -244,26 +245,26 @@ func installContainerRuntime(containerTool string) {
 
 func installReverseProxy(proxy string) {
 	if proxy != "caddy" {
-		fmt.Println("Error: Unsupported reverse proxy:", proxy)
+		logger.Error("Unsupported reverse proxy", "proxy", proxy)
 		os.Exit(1)
 	}
 
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
 	if osID == "rocky" {
 		if err := runCommand("dnf", "install", "-y", proxy); err != nil {
-			fmt.Println("Error installing "+proxy+":", err)
+			logger.Error("Error installing proxy", "proxy", proxy, "err", err)
 			os.Exit(1)
 		}
 	}
 
 	if osID == "ubuntu" {
 		if err := runCommand("apt-get", "install", "-y", proxy); err != nil {
-			fmt.Println("Error installing "+proxy+":", err)
+			logger.Error("Error installing proxy", "proxy", proxy, "err", err)
 			os.Exit(1)
 		}
 	}
@@ -272,20 +273,20 @@ func installReverseProxy(proxy string) {
 func installVersionControlSystem(vcs string) {
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
 	if osID == "rocky" {
 		if err := runCommand("dnf", "install", "-y", vcs); err != nil {
-			fmt.Println("Error installing ", vcs, ":", err)
+			logger.Error("Error installing VCS", "vcs", vcs, "err", err)
 			os.Exit(1)
 		}
 	}
 
 	if osID == "ubuntu" {
 		if err := runCommand("apt-get", "install", "-y", vcs); err != nil {
-			fmt.Println("Error installing ", vcs, ":", err)
+			logger.Error("Error installing VCS", "vcs", vcs, "err", err)
 			os.Exit(1)
 		}
 	}
@@ -294,11 +295,11 @@ func installVersionControlSystem(vcs string) {
 func installBuildpackCLI() {
 	// Check if pack CLI is already installed
 	if _, err := exec.LookPath("pack"); err == nil {
-		fmt.Println("   pack CLI is already installed")
+		logger.Info("   pack CLI is already installed")
 		return
 	}
 
-	fmt.Println("   Installing pack CLI...")
+	logger.Info("   Installing pack CLI...")
 
 	// For Rocky Linux, use a direct binary download approach
 	// The official script has issues on some systems
@@ -321,45 +322,45 @@ func installBuildpackCLI() {
 	}
 
 	if url == "" {
-		fmt.Println("Error: Could not find a valid pack CLI release")
+		logger.Error("Could not find a valid pack CLI release")
 		os.Exit(1)
 	}
 
-	fmt.Printf("   Using pack CLI version: %s\n", selectedVersion)
+	logger.Info(fmt.Sprintf("   Using pack CLI version: %s", selectedVersion))
 
 	// Download the tarball
 	if err := runCommand("curl", "-sSL", "-L", url, "-o", "/tmp/pack.tgz"); err != nil {
-		fmt.Println("Error downloading pack CLI:", err)
+		logger.Error("Error downloading pack CLI", "err", err)
 		os.Exit(1)
 	}
 
 	// Create a temporary directory for extraction
 	tmpDir := "/tmp/pack-install"
 	if err := os.RemoveAll(tmpDir); err != nil {
-		fmt.Println("Warning: Failed to clean up temp directory:", err)
+		logger.Warn("Failed to clean up temp directory", "err", err)
 	}
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		fmt.Println("Error creating temp directory:", err)
+		logger.Error("Error creating temp directory", "err", err)
 		os.Exit(1)
 	}
 
 	// Extract the tarball
 	if err := runCommand("tar", "-xzf", "/tmp/pack.tgz", "-C", tmpDir); err != nil {
-		fmt.Println("Error extracting pack CLI:", err)
+		logger.Error("Error extracting pack CLI", "err", err)
 		os.Exit(1)
 	}
 
 	// List extracted files for debugging
 	listCmd := exec.Command("ls", "-la", tmpDir)
 	if output, err := listCmd.Output(); err == nil {
-		fmt.Printf("   Extracted files in %s:\n%s\n", tmpDir, string(output))
+		logger.Info(fmt.Sprintf("   Extracted files in %s:\n%s", tmpDir, string(output)))
 	}
 
 	// Find and install the binary
 	// First, check what was extracted
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
-		fmt.Println("Error reading temp directory:", err)
+		logger.Error("Error reading temp directory", "err", err)
 		os.Exit(1)
 	}
 
@@ -394,126 +395,126 @@ func installBuildpackCLI() {
 	}
 
 	if !found {
-		fmt.Println("Error: Could not find pack binary in extracted files")
+		logger.Error("Could not find pack binary in extracted files")
 		os.Exit(1)
 	}
 
 	if err := runCommand("cp", packBinary, "/usr/local/bin/pack"); err != nil {
-		fmt.Println("Error copying pack binary:", err)
+		logger.Error("Error copying pack binary", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chmod", "+x", "/usr/local/bin/pack"); err != nil {
-		fmt.Println("Error setting executable permissions:", err)
+		logger.Error("Error setting executable permissions", "err", err)
 		os.Exit(1)
 	}
 
 	// Debug: Check if the file exists and is executable
 	if stat, err := os.Stat("/usr/local/bin/pack"); err != nil {
-		fmt.Printf("Error: pack binary not found at /usr/local/bin/pack: %v\n", err)
+		logger.Error("pack binary not found at /usr/local/bin/pack", "err", err)
 		os.Exit(1)
 	} else {
-		fmt.Printf("   pack binary installed: size=%d, mode=%v\n", stat.Size(), stat.Mode())
+		logger.Info(fmt.Sprintf("   pack binary installed: size=%d, mode=%v", stat.Size(), stat.Mode()))
 		// Check if it's executable
 		if stat.Mode()&0111 == 0 {
-			fmt.Println("Error: pack binary is not executable")
+			logger.Error("pack binary is not executable")
 			os.Exit(1)
 		}
 	}
 
 	// Clean up
 	if err := os.RemoveAll(tmpDir); err != nil {
-		fmt.Println("Warning: Failed to clean up temp directory:", err)
+		logger.Warn("Failed to clean up temp directory", "err", err)
 	}
 	if err := os.Remove("/tmp/pack.tgz"); err != nil {
-		fmt.Println("Warning: Failed to clean up pack archive:", err)
+		logger.Warn("Failed to clean up pack archive", "err", err)
 	}
 
 	// Verify installation by trying to run the binary directly
 	// Instead of using exec.LookPath(), which might have PATH issues
 	cmd := exec.Command("/usr/local/bin/pack", "--version")
 	if output, err := cmd.Output(); err != nil {
-		fmt.Printf("Error: pack CLI verification failed: %v\n", err)
+		logger.Error("pack CLI verification failed", "err", err)
 		// Try to get stderr for more info
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			fmt.Printf("Stderr: %s\n", exitErr.Stderr)
+			logger.Error(fmt.Sprintf("Stderr: %s", exitErr.Stderr))
 		}
 		os.Exit(1)
 	} else {
-		fmt.Printf("   ✅ pack CLI installed successfully: %s", string(output))
+		logger.Info(fmt.Sprintf("   ✅ pack CLI installed successfully: %s", string(output)))
 	}
 }
 
 func createUser() {
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
 	if osID == "rocky" {
 		if err := runCommand("useradd", "--system", "--shell", "/bin/bash", "--home", "/home/mitte", "--create-home", "mitte", "--groups", "docker"); err != nil {
-			fmt.Println("Warning: 'mitte' user may already exist. Skipping.", err)
+			logger.Warn("'mitte' user may already exist. Skipping.", "err", err)
 		}
 
 		if err := runCommand("passwd", "-l", "mitte"); err != nil {
-			fmt.Println("Error locking user:", err)
+			logger.Error("Error locking user", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/var/lib/mitte/apps"); err != nil {
-			fmt.Println("Error creating apps directory:", err)
+			logger.Error("Error creating apps directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/var/lib/mitte/repos"); err != nil {
-			fmt.Println("Error creating repos directory:", err)
+			logger.Error("Error creating repos directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/etc/mitte"); err != nil {
-			fmt.Println("Error creating configuration directory:", err)
+			logger.Error("Error creating configuration directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("chown", "-R", "mitte:mitte", "/var/lib/mitte", "/home/mitte", "/etc/mitte"); err != nil {
-			fmt.Println("Error creating configuration directory:", err)
+			logger.Error("Error creating configuration directory", "err", err)
 			os.Exit(1)
 		}
 	}
 
 	if osID == "ubuntu" {
 		if err := runCommand("adduser", "--system", "--shell", "/bin/bash", "--home", "/home/mitte", "--create-home", "mitte"); err != nil {
-			fmt.Println("Warning: 'mitte' user may already exist. Skipping.", err)
+			logger.Warn("'mitte' user may already exist. Skipping.", "err", err)
 		}
 
 		if err := runCommand("usermod", "-aG", "docker", "mitte"); err != nil {
-			fmt.Println("Error adding 'mitte' user to docker group:", err)
+			logger.Error("Error adding 'mitte' user to docker group", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("passwd", "-l", "mitte"); err != nil {
-			fmt.Println("Error locking user:", err)
+			logger.Error("Error locking user", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/var/lib/mitte/apps"); err != nil {
-			fmt.Println("Error creating apps directory:", err)
+			logger.Error("Error creating apps directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/var/lib/mitte/repos"); err != nil {
-			fmt.Println("Error creating repos directory:", err)
+			logger.Error("Error creating repos directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("mkdir", "-p", "/etc/mitte"); err != nil {
-			fmt.Println("Error creating configuration directory:", err)
+			logger.Error("Error creating configuration directory", "err", err)
 			os.Exit(1)
 		}
 
 		if err := runCommand("chown", "-R", "mitte:mitte", "/var/lib/mitte", "/home/mitte", "/etc/mitte"); err != nil {
-			fmt.Println("Error creating configuration directory:", err)
+			logger.Error("Error creating configuration directory", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -524,7 +525,7 @@ func configureSudoers() {
 	sudoersChownContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/chown\n"
 	sudoersChownFilePath := "/etc/sudoers.d/mitte-chown"
 	if err := os.WriteFile(sudoersChownFilePath, []byte(sudoersChownContent), 0440); err != nil {
-		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersChownFilePath, err)
+		logger.Error("Error creating sudoers file", "path", sudoersChownFilePath, "err", err)
 		os.Exit(1)
 	}
 
@@ -536,7 +537,7 @@ func configureSudoers() {
 		"mitte ALL=(ALL) NOPASSWD: /usr/bin/systemctl status mitte-watcher\n"
 	sudoersCaddyFilePath := "/etc/sudoers.d/mitte-caddy"
 	if err := os.WriteFile(sudoersCaddyFilePath, []byte(sudoersCaddyContent), 0440); err != nil {
-		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersCaddyFilePath, err)
+		logger.Error("Error creating sudoers file", "path", sudoersCaddyFilePath, "err", err)
 		os.Exit(1)
 	}
 
@@ -544,22 +545,22 @@ func configureSudoers() {
 	sudoersMitteContent := "mitte ALL=(ALL) NOPASSWD: /usr/bin/mitte\n"
 	sudoersMitteFilePath := "/etc/sudoers.d/mitte-cmd"
 	if err := os.WriteFile(sudoersMitteFilePath, []byte(sudoersMitteContent), 0440); err != nil {
-		fmt.Printf("Error creating sudoers file %s: %v\n", sudoersMitteFilePath, err)
+		logger.Error("Error creating sudoers file", "path", sudoersMitteFilePath, "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Sudoers configured for 'mitte' user.")
+	logger.Info("Sudoers configured for 'mitte' user.")
 }
 
 func configureReverseProxy(proxy string) {
 	osID, err := getOS()
 	if err != nil {
-		fmt.Println("Error getting OS:", err)
+		logger.Error("Error getting OS", "err", err)
 		os.Exit(1)
 	}
 
 	if proxy != "caddy" {
-		fmt.Println("Error: Unsupported reverse proxy:", proxy)
+		logger.Error("Unsupported reverse proxy", "proxy", proxy)
 		os.Exit(1)
 	}
 
@@ -601,7 +602,7 @@ func installMitteBinary() error {
 		return fmt.Errorf("failed to set executable permissions: %w", err)
 	}
 
-	fmt.Printf("mitte installed successfully to %s\n", destPath)
+	logger.Info(fmt.Sprintf("mitte installed successfully to %s", destPath))
 
 	symlinkPath := "/usr/bin/mitte"
 	// Attempt to remove an existing symlink to make the operation idempotent.
@@ -614,7 +615,7 @@ func installMitteBinary() error {
 		return fmt.Errorf("failed to create symlink: %w", err)
 	}
 
-	fmt.Printf("Successfully created symlink at %s\n", symlinkPath)
+	logger.Info(fmt.Sprintf("Successfully created symlink at %s", symlinkPath))
 
 	return nil
 }
@@ -628,20 +629,20 @@ func enableAdminMode() {
 	const adminDirective = "admin localhost:2019"
 	const adminBlock = "{\n\t" + adminDirective + "\n}\n"
 
-	fmt.Println("INFO: Checking Caddy configuration at", caddyfilePath)
+	logger.Info(fmt.Sprintf("Checking Caddy configuration at %s", caddyfilePath))
 
 	contentBytes, err := os.ReadFile(caddyfilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("INFO: Caddyfile not found. Creating a new one with admin mode...\n")
+			logger.Info("Caddyfile not found. Creating a new one with admin mode...")
 			err = os.WriteFile(caddyfilePath, []byte(adminBlock), 0644)
 			if err != nil {
-				log.Fatalf("FATAL: Failed to create and write to Caddyfile: %v\n", err)
+				logger.Fatal("Failed to create and write to Caddyfile", "err", err)
 			}
-			fmt.Println("SUCCESS: Successfully created Caddyfile with admin mode enabled.")
+			logger.Info("Successfully created Caddyfile with admin mode enabled.")
 			return
 		}
-		log.Fatalf("FATAL: Failed to read Caddyfile: %v\n", err)
+		logger.Fatal("Failed to read Caddyfile", "err", err)
 	}
 
 	content := string(contentBytes)
@@ -651,17 +652,17 @@ func enableAdminMode() {
 	for _, line := range lines {
 		if strings.Contains(strings.TrimSpace(line), "admin ") {
 			hasAdminDirective = true
-			fmt.Printf("INFO: Admin mode is already configured: \"%s\"\n", strings.TrimSpace(line))
+			logger.Info(fmt.Sprintf("Admin mode is already configured: \"%s\"", strings.TrimSpace(line)))
 			break
 		}
 	}
 
 	if hasAdminDirective {
-		fmt.Println("INFO: No changes needed.")
+		logger.Info("No changes needed.")
 		return
 	}
 
-	fmt.Println("INFO: Admin directive not found. Modifying Caddyfile...")
+	logger.Info("Admin directive not found. Modifying Caddyfile...")
 
 	firstNonEmptyLineIdx := -1
 	for i, line := range lines {
@@ -694,35 +695,35 @@ func enableAdminMode() {
 
 	err = os.WriteFile(caddyfilePath, []byte(newContent), 0644)
 	if err != nil {
-		log.Fatalf("FATAL: Failed to write updated Caddyfile: %v", err)
+		logger.Fatal("Failed to write updated Caddyfile", "err", err)
 	}
 
-	fmt.Println("SUCCESS: Successfully enabled admin mode in Caddyfile.")
+	logger.Info("Successfully enabled admin mode in Caddyfile.")
 }
 
 func configureSSH() {
 	if err := runCommand("mkdir", "-p", "/home/mitte/.ssh"); err != nil {
-		fmt.Println("Error creating SSH directory:", err)
+		logger.Error("Error creating SSH directory", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("touch", "/home/mitte/.ssh/authorized_keys"); err != nil {
-		fmt.Println("Error creating SSH authorized keys file:", err)
+		logger.Error("Error creating SSH authorized keys file", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chown", "-R", "mitte:mitte", "/home/mitte/.ssh"); err != nil {
-		fmt.Println("Error creating SSH authorized keys file:", err)
+		logger.Error("Error creating SSH authorized keys file", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chmod", "700", "/home/mitte/.ssh"); err != nil {
-		fmt.Println("Error creating SSH authorized keys file:", err)
+		logger.Error("Error creating SSH authorized keys file", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chmod", "600", "/home/mitte/.ssh/authorized_keys"); err != nil {
-		fmt.Println("Error creating SSH authorized keys file:", err)
+		logger.Error("Error creating SSH authorized keys file", "err", err)
 		os.Exit(1)
 	}
 }
@@ -730,34 +731,34 @@ func configureSSH() {
 func installAndConfigureCaddy() {
 	proxy := "caddy"
 	if err := runCommand("mkdir", "-p", "/etc/caddy"); err != nil {
-		fmt.Println("Error creating Caddy directory:", err)
+		logger.Error("Error creating Caddy directory", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("touch", "/etc/caddy/Caddyfile"); err != nil {
-		fmt.Println("Error creating Caddy file:", err)
+		logger.Error("Error creating Caddy file", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chmod", "644", "/etc/caddy/Caddyfile"); err != nil {
-		fmt.Println("Error setting permissions for Caddyfile:", err)
+		logger.Error("Error setting permissions for Caddyfile", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("chown", "root:root", "/etc/caddy/Caddyfile"); err != nil {
-		fmt.Println("Error setting ownership for Caddyfile:", err)
+		logger.Error("Error setting ownership for Caddyfile", "err", err)
 		os.Exit(1)
 	}
 
 	enableAdminMode()
 
 	if err := runCommand("systemctl", "enable", proxy); err != nil {
-		fmt.Println("Error enabling "+proxy+":", err)
+		logger.Error("Error enabling proxy", "proxy", proxy, "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("systemctl", "reload-or-restart", proxy); err != nil {
-		fmt.Println("Error starting or reloading "+proxy+":", err)
+		logger.Error("Error starting or reloading proxy", "proxy", proxy, "err", err)
 		os.Exit(1)
 	}
 }
@@ -784,12 +785,12 @@ func configureBaseDomain() error {
 		return fmt.Errorf("failed to set ownership of %s: %w", domainFilePath, err)
 	}
 
-	fmt.Printf("✅ Base domain set to '%s'.\n", domain)
+	logger.Info(fmt.Sprintf("✅ Base domain set to '%s'.", domain))
 	return nil
 }
 
 func installContainerWatcher() {
-	fmt.Println("   Installing container watcher service...")
+	logger.Info("   Installing container watcher service...")
 
 	// Copy the service file
 	serviceContent := `[Unit]
@@ -818,26 +819,26 @@ WantedBy=multi-user.target`
 
 	servicePath := "/etc/systemd/system/mitte-watcher.service"
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
-		fmt.Printf("Error creating watcher service file: %v\n", err)
+		logger.Error("Error creating watcher service file", "err", err)
 		os.Exit(1)
 	}
 
 	// Reload systemd
 	if err := runCommand("systemctl", "daemon-reload"); err != nil {
-		fmt.Printf("Error reloading systemd: %v\n", err)
+		logger.Error("Error reloading systemd", "err", err)
 		os.Exit(1)
 	}
 
 	// Enable and start the service
 	if err := runCommand("systemctl", "enable", "mitte-watcher.service"); err != nil {
-		fmt.Printf("Error enabling watcher service: %v\n", err)
+		logger.Error("Error enabling watcher service", "err", err)
 		os.Exit(1)
 	}
 
 	if err := runCommand("systemctl", "start", "mitte-watcher.service"); err != nil {
-		fmt.Printf("Error starting watcher service: %v\n", err)
+		logger.Error("Error starting watcher service", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("   ✅ Container watcher service installed and started")
+	logger.Info("   ✅ Container watcher service installed and started")
 }

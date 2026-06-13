@@ -734,6 +734,30 @@ mitte setup
 mitte remote --host your-server.com --app my-awesome-app
 ```
 
+### 📝 Logging
+
+Mitte logs all operations to a rotating log file and to stderr. This helps with debugging deployments, database operations, and routing issues.
+
+**Log file:** `/var/log/mitte/mitte.log`
+
+**Log rotation:**
+- Max size: 10 MB
+- Max age: 14 days
+- Max backups: 5
+- Compressed rotated logs
+
+**CLI flags:**
+
+```bash
+# Enable verbose (debug) logging
+mitte --verbose apps create my-app
+
+# Enable debug logging (alias for --verbose)
+mitte --debug apps build my-app
+```
+
+When `--verbose` or `--debug` is used, Mitte outputs additional debug information to stderr. The log file always captures all log levels regardless of the CLI flag.
+
 ### 🛠️ Troubleshooting
 
 #### Caddy "Connection Refused" Errors After Docker Restart

@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -28,7 +29,7 @@ func CreateMariaDB(ctx context.Context, instanceName, rootPassword, version, con
 
 	theImage := fmt.Sprintf("mariadb:%s", version)
 
-	fmt.Printf("Pulling image %s...\n", theImage)
+	logger.Info(fmt.Sprintf("Pulling image %s...", theImage))
 	out, err := cli.ImagePull(ctx, theImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
@@ -120,7 +121,7 @@ func DestroyMariaDB(ctx context.Context, instanceName string) error {
 			}
 		}
 	} else {
-		fmt.Printf("Skipping volume removal for custom data directory: %s\n", svc.DataDir)
+		logger.Info(fmt.Sprintf("Skipping volume removal for custom data directory: %s", svc.DataDir))
 	}
 
 	return nil
@@ -314,22 +315,22 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 		return fmt.Errorf("already on version %s", targetVersion)
 	}
 
-	fmt.Printf("Planning upgrade of MariaDB instance '%s' from %s to %s\n", instanceName, svc.Version, targetVersion)
+	logger.Info(fmt.Sprintf("Planning upgrade of MariaDB instance '%s' from %s to %s", instanceName, svc.Version, targetVersion))
 
 	if dryRun {
-		fmt.Println("Dry run mode - no changes will be made")
+		logger.Info("Dry run mode - no changes will be made")
 		return nil
 	}
 
 	// 1. Create backup
 	backupFile := fmt.Sprintf("/tmp/mitte-mariadb-backup-%s-%s.sql", instanceName, time.Now().Format("20060102-150405"))
-	fmt.Printf("Creating backup to %s...\n", backupFile)
+	logger.Info(fmt.Sprintf("Creating backup to %s...", backupFile))
 	if err := BackupMariaDB(ctx, instanceName, backupFile); err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
 
 	// 2. Stop current container
-	fmt.Println("Stopping current container...")
+	logger.Info("Stopping current container...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -344,7 +345,7 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	}
 
 	// 3. Remove current container (keep volume)
-	fmt.Println("Removing current container...")
+	logger.Info("Removing current container...")
 	if err := cli.ContainerRemove(ctx, instanceName, container.RemoveOptions{}); err != nil {
 		if !client.IsErrNotFound(err) {
 			return fmt.Errorf("failed to remove container: %w", err)
@@ -353,7 +354,7 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 
 	// 4. Pull new image
 	newImage := fmt.Sprintf("mariadb:%s", targetVersion)
-	fmt.Printf("Pulling new image %s...\n", newImage)
+	logger.Info(fmt.Sprintf("Pulling new image %s...", newImage))
 	out, err := cli.ImagePull(ctx, newImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull new image: %w", err)
@@ -362,7 +363,7 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	io.Copy(os.Stdout, out)
 
 	// 5. Create new container with same volume and configuration
-	fmt.Println("Creating new container...")
+	logger.Info("Creating new container...")
 
 	envVars := []string{
 		fmt.Sprintf("MARIADB_ROOT_PASSWORD=%s", svc.RootPassword),
@@ -416,13 +417,13 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	}
 
 	// 6. Start new container
-	fmt.Println("Starting new container...")
+	logger.Info("Starting new container...")
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("failed to start new container: %w", err)
 	}
 
 	// 7. Wait for health check
-	fmt.Println("Waiting for MariaDB to become healthy...")
+	logger.Info("Waiting for MariaDB to become healthy...")
 	for i := 0; i < 60; i++ {
 		inspect, err := cli.ContainerInspect(ctx, resp.ID)
 		if err != nil {
@@ -435,12 +436,12 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 	}
 
 	// 8. Run mysql_upgrade if needed (for major version upgrades)
-	fmt.Println("Checking if mysql_upgrade is needed...")
+	logger.Info("Checking if mysql_upgrade is needed...")
 	cmd := exec.Command("docker", "exec", instanceName, "mysql_upgrade", "-u", "root", "-p"+svc.RootPassword)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// mysql_upgrade may fail on certain versions, log but continue
-		fmt.Printf("mysql_upgrade output: %s\n", output)
+		logger.Info(fmt.Sprintf("mysql_upgrade output: %s", output))
 	}
 
 	// 9. Update service state with new version and migration info
@@ -452,8 +453,8 @@ func UpgradeMariaDB(ctx context.Context, instanceName, targetVersion string, dry
 		return fmt.Errorf("failed to update service state: %w", err)
 	}
 
-	fmt.Printf("Successfully upgraded MariaDB instance '%s' from %s to %s\n", instanceName, svc.Version, targetVersion)
-	fmt.Printf("Backup saved to: %s\n", backupFile)
+	logger.Info(fmt.Sprintf("Successfully upgraded MariaDB instance '%s' from %s to %s", instanceName, svc.Version, targetVersion))
+	logger.Info(fmt.Sprintf("Backup saved to: %s", backupFile))
 
 	return nil
 }

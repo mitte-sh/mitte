@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -27,7 +28,7 @@ func CreatePostgres(ctx context.Context, instanceName, rootPassword, user, datab
 
 	theImage := fmt.Sprintf("postgres:%s", version)
 
-	fmt.Printf("Pulling image %s...\n", theImage)
+	logger.Info(fmt.Sprintf("Pulling image %s...", theImage))
 	out, err := cli.ImagePull(ctx, theImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
@@ -110,7 +111,7 @@ func DestroyPostgres(ctx context.Context, instanceName string) error {
 			}
 		}
 	} else {
-		fmt.Printf("Skipping volume removal for custom data directory: %s\n", svc.DataDir)
+		logger.Info(fmt.Sprintf("Skipping volume removal for custom data directory: %s", svc.DataDir))
 	}
 
 	return nil

@@ -23,6 +23,7 @@ import (
 	"github.com/mitte-sh/mitte/pkg/builder"
 	"github.com/mitte-sh/mitte/pkg/config"
 	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/registry"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
@@ -262,21 +263,21 @@ func runAppsList(cmd *cobra.Command, args []string) {
 	files, err := os.ReadDir(appsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No applications have been deployed yet.")
+			logger.Info("No applications have been deployed yet.")
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error: Could not read the application directory: %v\n", err)
+		logger.Error("Could not read the application directory", "err", err)
 		os.Exit(1)
 	}
 
 	if len(files) == 0 {
-		fmt.Println("No applications found.")
+		logger.Info("No applications found.")
 		return
 	}
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+		logger.Error("Could not connect to Docker daemon", "err", err)
 		os.Exit(1)
 	}
 	defer cli.Close()
@@ -330,85 +331,85 @@ func runAppsList(cmd *cobra.Command, args []string) {
 
 func runAppsCreate(cmd *cobra.Command, args []string) {
 	appName := args[0]
-	fmt.Fprintf(os.Stderr, "Creating app '%s'... ", appName)
+	logger.Info(fmt.Sprintf("Creating app '%s'... ", appName))
 
 	// --- 1. Check if app already exists ---
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not check app state: %v\n", err)
+		logger.Error("Could not check app state", "err", err)
 		os.Exit(1)
 	}
 	// An "existing" app is one that already has domains.
 	if len(app.Domains) > 0 {
-		fmt.Fprintf(os.Stderr, "\nError: Application '%s' already exists.\n", appName)
+		logger.Error(fmt.Sprintf("Application '%s' already exists.", appName))
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
 	// --- 2. Create app state with a default domain ---
 	baseDomain, err := config.GetBaseDomain()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+		logger.Error(fmt.Sprintf("Error: %v", err))
 		os.Exit(1)
 	}
 	defaultDomain := fmt.Sprintf("%s.%s", appName, baseDomain)
-	fmt.Fprintf(os.Stderr, "Assigning default domain: %s\n", defaultDomain)
+	logger.Info(fmt.Sprintf("Assigning default domain: %s", defaultDomain))
 	app.Domains = append(app.Domains, defaultDomain)
 	if err = app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not save app state: %v\n", err)
+		logger.Error("Could not save app state", "err", err)
 		os.Exit(1)
 	}
 
 	// --- 3. Pull the placeholder image ---
-	fmt.Fprintf(os.Stderr, "Pulling placeholder image '%s'... ", placeholderImage)
+	logger.Info(fmt.Sprintf("Pulling placeholder image '%s'... ", placeholderImage))
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not connect to Docker: %v\n", err)
+		logger.Error("Could not connect to Docker", "err", err)
 		os.Exit(1)
 	}
 	defer cli.Close()
 
 	reader, err := cli.ImagePull(context.Background(), placeholderImage, image.PullOptions{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not pull placeholder image: %v\n", err)
+		logger.Error("Could not pull placeholder image", "err", err)
 		os.Exit(1)
 	}
 	io.Copy(io.Discard, reader) // Wait for the pull to complete but discard the noisy output
 	reader.Close()
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
 	// --- 4. Deploy the placeholder image ---
-	fmt.Fprintln(os.Stderr, "Deploying placeholder application...")
+	logger.Info("Deploying placeholder application...")
 	deployResult, err := deployer.Deploy(context.Background(), appName, placeholderImage, []string{}, []string{}, "", []string{}, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not deploy placeholder: %v\n", err)
+		logger.Error("Could not deploy placeholder", "err", err)
 		os.Exit(1)
 	}
 
 	// --- 4.5. Save host port to app state ---
 	app.HostPort = deployResult.HostPort
 	if err = app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not save host port: %v\n", err)
+		logger.Warn("Could not save host port", "err", err)
 	}
 
 	// --- 5. Route traffic ---
-	fmt.Fprintln(os.Stderr, "Routing traffic...")
+	logger.Info("Routing traffic...")
 	authEnabled := app.Auth != nil && app.Auth.Enabled
 	authPolicy := ""
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
 	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not update routes: %v\n", err)
+		logger.Error("Could not update routes", "err", err)
 		// Don't exit here, the app is running, just not routable.
 	}
 
 	// --- Final Success Message ---
-	fmt.Printf("\nSuccess! Your new application '%s' is ready.\n", appName)
-	fmt.Printf("You can view it at: http://%s\n", defaultDomain)
-	fmt.Println("To deploy your own code, add the git remote and push:")
-	fmt.Printf("  git remote add mitte mitte@%s:%s\n", baseDomain, appName)
-	fmt.Println("  git push mitte main")
+	logger.Info(fmt.Sprintf("Success! Your new application '%s' is ready.", appName))
+	logger.Info(fmt.Sprintf("You can view it at: http://%s", defaultDomain))
+	logger.Info("To deploy your own code, add the git remote and push:")
+	logger.Info(fmt.Sprintf("  git remote add mitte mitte@%s:%s", baseDomain, appName))
+	logger.Info("  git push mitte main")
 }
 
 func runAppsDestroy(cmd *cobra.Command, args []string) {
@@ -417,7 +418,7 @@ func runAppsDestroy(cmd *cobra.Command, args []string) {
 
 	appName, err := state.ResolveAppName(userInput)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error(fmt.Sprintf("Error: %v", err))
 		os.Exit(1)
 	}
 
@@ -499,50 +500,50 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	ctx := context.Background()
 
-	fmt.Fprintf(os.Stderr, "-----> Building app '%s'...\n", appName)
+	logger.Info(fmt.Sprintf("-----> Building app '%s'...", appName))
 
 	// 1. Load app state
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
 	// Enable the app if it was disabled
 	if app.Disabled {
-		fmt.Fprintf(os.Stderr, "-----> App was disabled, enabling it for deployment...\n")
+		logger.Info("-----> App was disabled, enabling it for deployment...")
 		app.Disabled = false
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not save app state: %v\n", err)
+			logger.Warn("Could not save app state", "err", err)
 		}
 	}
 
 	// Enable the app if it was disabled
 	if app.Disabled {
-		fmt.Fprintf(os.Stderr, "-----> App was disabled, enabling it for build...\n")
+		logger.Info("-----> App was disabled, enabling it for build...")
 		app.Disabled = false
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not save app state: %v\n", err)
+			logger.Warn("Could not save app state", "err", err)
 		}
 	}
 
 	// 2. Check if git repo exists
 	repoPath := filepath.Join("/var/lib/mitte/repos", appName+".git")
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: Git repository for '%s' does not exist. Please push code first.\n", appName)
+		logger.Error(fmt.Sprintf("Git repository for '%s' does not exist. Please push code first.", appName))
 		os.Exit(1)
 	}
 
 	// 3. Add the repository to git safe directories to avoid ownership issues
-	fmt.Fprintf(os.Stderr, "-----> Configuring git safe directory...\n")
+	logger.Info("-----> Configuring git safe directory...")
 	safeDirCmd := exec.Command("git", "config", "--global", "--add", "safe.directory", repoPath)
 	safeDirOutput, err := safeDirCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to add safe directory: %v\n%s", err, string(safeDirOutput))
+		logger.Warn(fmt.Sprintf("Failed to add safe directory: %v\n%s", err, string(safeDirOutput)))
 		// Continue anyway, as this might work on some systems
 	}
 
@@ -551,72 +552,72 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 	getBranchCmd.Dir = repoPath
 	branchOutput, err := getBranchCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to determine deployment branch: %v\n%s", err, string(branchOutput))
+		logger.Error(fmt.Sprintf("Failed to determine deployment branch: %v\n%s", err, string(branchOutput)))
 		os.Exit(1)
 	}
 	branchToDeploy := strings.TrimSpace(string(branchOutput))
 	if branchToDeploy == "" {
-		fmt.Fprintf(os.Stderr, "Error: No branch found to deploy.\n")
+		logger.Error("No branch found to deploy.")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Using branch '%s'\n", branchToDeploy)
+	logger.Info(fmt.Sprintf("-----> Using branch '%s'", branchToDeploy))
 
 	// 5. Create temporary build directory
 	buildDir, err := os.MkdirTemp("", "mitte-build-"+appName+"-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to create temporary build directory: %v\n", err)
+		logger.Error("Failed to create temporary build directory", "err", err)
 		os.Exit(1)
 	}
 	defer os.RemoveAll(buildDir)
 
 	// 6. Check out the code
-	fmt.Fprintf(os.Stderr, "-----> Checking out latest code...\n")
+	logger.Info("-----> Checking out latest code...")
 	archiveCmdString := fmt.Sprintf("git archive %s | tar -x -C %s", branchToDeploy, buildDir)
 	archiveCmd := exec.Command("sh", "-c", archiveCmdString)
 	archiveCmd.Dir = repoPath
 	archiveOutput, err := archiveCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to archive code: %v\n%s", err, string(archiveOutput))
+		logger.Error(fmt.Sprintf("Failed to archive code: %v\n%s", err, string(archiveOutput)))
 		os.Exit(1)
 	}
 
 	// 7. Build the image
-	fmt.Fprintf(os.Stderr, "-----> Building Docker image...\n")
+	logger.Info("-----> Building Docker image...")
 	imageTag, err := builder.BuildImage(ctx, appName, buildDir, repoPath, branchToDeploy, app.EnvVars)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Build failed: %v\n", err)
+		logger.Error("Build failed", "err", err)
 		os.Exit(1)
 	}
 
 	// 8. Deploy the new image
-	fmt.Fprintf(os.Stderr, "-----> Deploying new image...\n")
+	logger.Info("-----> Deploying new image...")
 	deployResult, err := deployer.Deploy(ctx, appName, imageTag, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		logger.Error("Deployment failed", "err", err)
 		os.Exit(1)
 	}
 
 	// 9. Save host port to app state
 	app.HostPort = deployResult.HostPort
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
+		logger.Warn("Failed to save host port", "err", err)
 	}
 
 	// 10. Update routes
-	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
+	logger.Info("-----> Updating routes...")
 	authEnabled := app.Auth != nil && app.Auth.Enabled
 	authPolicy := ""
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
 	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Success! App '%s' rebuilt and redeployed.\n", appName)
-	fmt.Printf("Container ID: %s\n", deployResult.ContainerID[:12])
+	logger.Info(fmt.Sprintf("Success! App '%s' rebuilt and redeployed.", appName))
+	logger.Info(fmt.Sprintf("Container ID: %s", deployResult.ContainerID[:12]))
 }
 
 func formatTimeAgo(t time.Time) string {
@@ -639,28 +640,28 @@ func runAppsSetImage(cmd *cobra.Command, args []string) {
 
 	// Validate image name format (basic validation)
 	if imageName == "" {
-		fmt.Fprintf(os.Stderr, "Error: Image name cannot be empty\n")
+		logger.Error("Image name cannot be empty")
 		os.Exit(1)
 	}
 
 	// Basic validation - should contain at least one slash or be a simple name
 	if !strings.Contains(imageName, "/") && !strings.Contains(imageName, ":") {
 		// Allow simple names like "nginx" but warn about best practices
-		fmt.Fprintf(os.Stderr, "Warning: Using simple image name '%s'. Consider using a fully qualified name like '%s:latest'\n", imageName, imageName)
+		logger.Warn(fmt.Sprintf("Using simple image name '%s'. Consider using a fully qualified name like '%s:latest'", imageName, imageName))
 	}
 
-	fmt.Fprintf(os.Stderr, "Setting image for app '%s' to '%s'... ", appName, imageName)
+	logger.Info(fmt.Sprintf("Setting image for app '%s' to '%s'... ", appName, imageName))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -669,14 +670,14 @@ func runAppsSetImage(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured to use image '%s'\n", appName, imageName)
-	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured to use image '%s'", appName, imageName))
+	logger.Info(fmt.Sprintf("To deploy the app, run: mitte apps deploy-image %s", appName))
 }
 
 func runAppsSetVolumes(cmd *cobra.Command, args []string) {
@@ -687,22 +688,22 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 
 	// Validate that we have at least one volume
 	if len(volumeArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: At least one volume mapping is required\n")
+		logger.Error("At least one volume mapping is required")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Setting volumes for app '%s'... ", appName)
+	logger.Info(fmt.Sprintf("Setting volumes for app '%s'... ", appName))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -715,21 +716,21 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 
 		// Validate volume format (should contain at least one colon)
 		if !strings.Contains(volume, ":") {
-			fmt.Fprintf(os.Stderr, "\nError: Invalid volume format '%s'. Use format: host:container[:options]\n", volume)
-			fmt.Fprintf(os.Stderr, "Examples: /host/path:/container/path, /host/path:/container/path:ro\n")
+			logger.Error(fmt.Sprintf("Invalid volume format '%s'. Use format: host:container[:options]", volume))
+			logger.Info("Examples: /host/path:/container/path, /host/path:/container/path:ro")
 			os.Exit(1)
 		}
 
 		// Basic validation - should have 2 or 3 parts when split by colon
 		parts := strings.Split(volume, ":")
 		if len(parts) < 2 || len(parts) > 3 {
-			fmt.Fprintf(os.Stderr, "\nError: Invalid volume format '%s'. Expected 2 or 3 parts separated by ':'\n", volume)
+			logger.Error(fmt.Sprintf("Invalid volume format '%s'. Expected 2 or 3 parts separated by ':'", volume))
 			os.Exit(1)
 		}
 
 		// Check for empty host or container paths
 		if parts[0] == "" || parts[1] == "" {
-			fmt.Fprintf(os.Stderr, "\nError: Empty host or container path in volume '%s'\n", volume)
+			logger.Error(fmt.Sprintf("Empty host or container path in volume '%s'", volume))
 			os.Exit(1)
 		}
 
@@ -741,26 +742,26 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured with %d volume mount(s)\n", appName, len(volumes))
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured with %d volume mount(s)", appName, len(volumes)))
 	for i, volume := range volumes {
-		fmt.Printf("  %d. %s\n", i+1, volume)
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, volume))
 	}
 
 	if !noRestart {
-		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		logger.Info("Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			logger.Error("Error redeploying application", "err", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Volumes updated for '%s'. The application is now restarting.\n", appName)
+		logger.Info(fmt.Sprintf("Volumes updated for '%s'. The application is now restarting.", appName))
 	} else {
-		fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+		logger.Info(fmt.Sprintf("To deploy the app, run: mitte apps deploy-image %s", appName))
 	}
 }
 
@@ -776,20 +777,20 @@ func runAppsUnsetVolumes(cmd *cobra.Command, args []string) {
 	noRestart, _ := cmd.Flags().GetBool("no-restart")
 
 	if len(volumeArgs) == 0 && !removeAll {
-		fmt.Fprintf(os.Stderr, "Error: At least one volume mapping is required, or use --all\n")
+		logger.Error("At least one volume mapping is required, or use --all")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Unsetting volumes for app '%s'... ", appName)
+	logger.Info(fmt.Sprintf("Unsetting volumes for app '%s'... ", appName))
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist.\n", appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
 
@@ -807,21 +808,21 @@ func runAppsUnsetVolumes(cmd *cobra.Command, args []string) {
 	}
 
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
 	if !noRestart {
-		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		logger.Info("Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			logger.Error("Error redeploying application", "err", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Volumes updated for '%s'. The application is now restarting.\n", appName)
+		logger.Info(fmt.Sprintf("Volumes updated for '%s'. The application is now restarting.", appName))
 	} else {
-		fmt.Println("To deploy the app with the updated volumes, run: mitte apps deploy-image", appName)
+		logger.Info(fmt.Sprintf("To deploy the app with the updated volumes, run: mitte apps deploy-image %s", appName))
 	}
 }
 
@@ -833,22 +834,22 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 
 	// Validate that we have at least one port
 	if len(portArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: At least one port mapping is required\n")
+		logger.Error("At least one port mapping is required")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Setting ports for app '%s'... ", appName)
+	logger.Info(fmt.Sprintf("Setting ports for app '%s'... ", appName))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -861,21 +862,21 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 
 		// Validate port format (should contain exactly one colon)
 		if !strings.Contains(port, ":") {
-			fmt.Fprintf(os.Stderr, "\nError: Invalid port format '%s'. Use format: host:container\n", port)
-			fmt.Fprintf(os.Stderr, "Examples: 8080:80, 9200:9200, 3000:8080\n")
+			logger.Error(fmt.Sprintf("Invalid port format '%s'. Use format: host:container", port))
+			logger.Info("Examples: 8080:80, 9200:9200, 3000:8080")
 			os.Exit(1)
 		}
 
 		// Basic validation - should have exactly 2 parts when split by colon
 		parts := strings.Split(port, ":")
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "\nError: Invalid port format '%s'. Expected exactly 2 parts separated by ':'\n", port)
+			logger.Error(fmt.Sprintf("Invalid port format '%s'. Expected exactly 2 parts separated by ':'", port))
 			os.Exit(1)
 		}
 
 		// Check for empty host or container ports
 		if parts[0] == "" || parts[1] == "" {
-			fmt.Fprintf(os.Stderr, "\nError: Empty host or container port in mapping '%s'\n", port)
+			logger.Error(fmt.Sprintf("Empty host or container port in mapping '%s'", port))
 			os.Exit(1)
 		}
 
@@ -893,26 +894,26 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured with %d port mapping(s)\n", appName, len(ports))
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured with %d port mapping(s)", appName, len(ports)))
 	for i, port := range ports {
-		fmt.Printf("  %d. %s\n", i+1, port)
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, port))
 	}
 
 	if !noRestart {
-		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		logger.Info("Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			logger.Error("Error redeploying application", "err", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Ports updated for '%s'. The application is now restarting.\n", appName)
+		logger.Info(fmt.Sprintf("Ports updated for '%s'. The application is now restarting.", appName))
 	} else {
-		fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+		logger.Info(fmt.Sprintf("To deploy the app, run: mitte apps deploy-image %s", appName))
 	}
 }
 
@@ -928,20 +929,20 @@ func runAppsUnsetPorts(cmd *cobra.Command, args []string) {
 	noRestart, _ := cmd.Flags().GetBool("no-restart")
 
 	if len(portArgs) == 0 && !removeAll {
-		fmt.Fprintf(os.Stderr, "Error: At least one port mapping is required, or use --all\n")
+		logger.Error("At least one port mapping is required, or use --all")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Unsetting ports for app '%s'... ", appName)
+	logger.Info(fmt.Sprintf("Unsetting ports for app '%s'... ", appName))
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist.\n", appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
 
@@ -959,21 +960,21 @@ func runAppsUnsetPorts(cmd *cobra.Command, args []string) {
 	}
 
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
 	if !noRestart {
-		fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+		logger.Info("Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+			logger.Error("Error redeploying application", "err", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Ports updated for '%s'. The application is now restarting.\n", appName)
+		logger.Info(fmt.Sprintf("Ports updated for '%s'. The application is now restarting.", appName))
 	} else {
-		fmt.Println("To deploy the app with the updated ports, run: mitte apps deploy-image", appName)
+		logger.Info(fmt.Sprintf("To deploy the app with the updated ports, run: mitte apps deploy-image %s", appName))
 	}
 }
 
@@ -981,39 +982,39 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	ctx := context.Background()
 
-	fmt.Fprintf(os.Stderr, "-----> Deploying app '%s' with pre-built image...\n", appName)
+	logger.Info(fmt.Sprintf("-----> Deploying app '%s' with pre-built image...", appName))
 
 	// 1. Load app state
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
 	// 2. Check if image is configured
 	if app.Image == "" {
-		fmt.Fprintf(os.Stderr, "Error: No image configured for app '%s'. Set an image first with 'mitte apps set-image %s <image>'\n", appName, appName)
+		logger.Error(fmt.Sprintf("No image configured for app '%s'. Set an image first with 'mitte apps set-image %s <image>'", appName, appName))
 		os.Exit(1)
 	}
 
 	// 3. Warn about environment variables for pre-built images
 	if len(app.EnvVars) > 0 {
-		fmt.Fprintf(os.Stderr, "-----> ⚠️  Warning: Environment variables will be applied at runtime, not during image build.\n")
-		fmt.Fprintf(os.Stderr, "       If your app needs env vars during build, use git push with a Dockerfile instead.\n")
+		logger.Warn("Environment variables will be applied at runtime, not during image build.")
+		logger.Info("       If your app needs env vars during build, use git push with a Dockerfile instead.")
 	}
 
 	// 4. Pull the image if it's not available locally
-	fmt.Fprintf(os.Stderr, "-----> Ensuring image '%s' is available...\n", app.Image)
+	logger.Info(fmt.Sprintf("-----> Ensuring image '%s' is available...", app.Image))
 
 	// 3. Pull the image if it's not available locally
-	fmt.Fprintf(os.Stderr, "-----> Ensuring image '%s' is available...\n", app.Image)
+	logger.Info(fmt.Sprintf("-----> Ensuring image '%s' is available...", app.Image))
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+		logger.Error("Could not connect to Docker daemon", "err", err)
 		os.Exit(1)
 	}
 
@@ -1021,7 +1022,7 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	_, _, err = cli.ImageInspectWithRaw(ctx, app.Image)
 	if err != nil {
 		// Image doesn't exist locally, pull it
-		fmt.Fprintf(os.Stderr, "-----> Pulling image '%s'...\n", app.Image)
+		logger.Info(fmt.Sprintf("-----> Pulling image '%s'...", app.Image))
 
 		// Create auth resolver for private registries
 		authResolver := registry.DefaultResolver()
@@ -1029,7 +1030,7 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 		// Get auth config for this image
 		authConfig, err := authResolver.GetAuthConfigForImage(app.Image)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not get registry auth: %v\n", err)
+			logger.Warn("Could not get registry auth", "err", err)
 		}
 
 		pullOpts := image.PullOptions{}
@@ -1044,48 +1045,48 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 
 		reader, err := cli.ImagePull(ctx, app.Image, pullOpts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not pull image '%s': %v\n", app.Image, err)
+			logger.Error(fmt.Sprintf("Could not pull image '%s'", app.Image), "err", err)
 			os.Exit(1)
 		}
 		io.Copy(io.Discard, reader) // Wait for the pull to complete but discard the noisy output
 		reader.Close()
-		fmt.Fprintf(os.Stderr, "-----> Image pulled successfully\n")
+		logger.Info("-----> Image pulled successfully")
 	} else {
-		fmt.Fprintf(os.Stderr, "-----> Image already available locally\n")
+		logger.Info("-----> Image already available locally")
 	}
 	cli.Close()
 
 	// 4. Deploy the image
-	fmt.Fprintf(os.Stderr, "-----> Deploying container...\n")
+	logger.Info("-----> Deploying container...")
 	deployResult, err := deployer.Deploy(ctx, appName, app.Image, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		logger.Error("Deployment failed", "err", err)
 		os.Exit(1)
 	}
 
 	// 4.5. Save host port to app state
 	app.HostPort = deployResult.HostPort
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to save host port: %v\n", err)
+		logger.Warn("Failed to save host port", "err", err)
 	}
 
 	// 5. Update routes
-	fmt.Fprintf(os.Stderr, "-----> Updating routes...\n")
+	logger.Info("-----> Updating routes...")
 	authEnabled := app.Auth != nil && app.Auth.Enabled
 	authPolicy := ""
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
 	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Success! App '%s' deployed successfully.\n", appName)
-	fmt.Printf("Container ID: %s\n", deployResult.ContainerID[:12])
-	fmt.Printf("Host Port: %s\n", deployResult.HostPort)
+	logger.Info(fmt.Sprintf("Success! App '%s' deployed successfully.", appName))
+	logger.Info(fmt.Sprintf("Container ID: %s", deployResult.ContainerID[:12]))
+	logger.Info(fmt.Sprintf("Host Port: %s", deployResult.HostPort))
 	if len(app.Domains) > 0 {
-		fmt.Printf("URL: http://%s\n", app.Domains[0])
+		logger.Info(fmt.Sprintf("URL: http://%s", app.Domains[0]))
 	}
 }
 
@@ -1095,22 +1096,22 @@ func runAppsSetBuildpack(cmd *cobra.Command, args []string) {
 
 	// Validate buildpack ID
 	if buildpackID == "" {
-		fmt.Fprintf(os.Stderr, "Error: Buildpack ID cannot be empty\n")
+		logger.Error("Buildpack ID cannot be empty")
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Setting buildpack for app '%s' to '%s'... ", appName, buildpackID)
+	logger.Info(fmt.Sprintf("Setting buildpack for app '%s' to '%s'... ", appName, buildpackID))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -1119,31 +1120,31 @@ func runAppsSetBuildpack(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured to use buildpack '%s'\n", appName, buildpackID)
-	fmt.Println("The next git push will use this buildpack for building.")
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured to use buildpack '%s'", appName, buildpackID))
+	logger.Info("The next git push will use this buildpack for building.")
 }
 
 func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 	appName := args[0]
 
-	fmt.Fprintf(os.Stderr, "Detecting buildpack for app '%s'...\n", appName)
+	logger.Info(fmt.Sprintf("Detecting buildpack for app '%s'...", appName))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -1155,7 +1156,7 @@ func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 
 	// Check if repo exists
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: Repository for app '%s' does not exist. Push code first with 'git push mitte main'\n", appName)
+		logger.Error(fmt.Sprintf("Repository for app '%s' does not exist. Push code first with 'git push mitte main'", appName))
 		os.Exit(1)
 	}
 
@@ -1164,20 +1165,20 @@ func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 	getBranchCmd.Dir = repoPath
 	branchOutput, err := getBranchCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not determine branch: %v\n%s", err, string(branchOutput))
+		logger.Error(fmt.Sprintf("Could not determine branch: %v\n%s", err, string(branchOutput)))
 		os.Exit(1)
 	}
 	branchName := strings.TrimSpace(string(branchOutput))
 
 	if branchName == "" {
-		fmt.Fprintf(os.Stderr, "Error: No branches found in repository\n")
+		logger.Error("No branches found in repository")
 		os.Exit(1)
 	}
 
 	// Create temporary directory to check out code
 	buildDir, err := os.MkdirTemp("", "mitte-detect-"+appName+"-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to create temporary directory: %v\n", err)
+		logger.Error("Failed to create temporary directory", "err", err)
 		os.Exit(1)
 	}
 	defer os.RemoveAll(buildDir)
@@ -1188,46 +1189,46 @@ func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 	archiveCmd.Dir = repoPath
 	archiveOutput, err := archiveCmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to extract code: %v\n%s", err, string(archiveOutput))
+		logger.Error(fmt.Sprintf("Failed to extract code: %v\n%s", err, string(archiveOutput)))
 		os.Exit(1)
 	}
 
 	// Detect buildpack
 	buildpackConfig, err := builder.DetectBuildpack(buildDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "No buildpack detected for app '%s': %v\n", appName, err)
-		fmt.Fprintf(os.Stderr, "\nTo configure a buildpack manually, run:\n")
-		fmt.Fprintf(os.Stderr, "  mitte apps set-buildpack %s <buildpack-id>\n", appName)
-		fmt.Fprintf(os.Stderr, "\nCommon buildpack IDs:\n")
-		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/nodejs\n")
-		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/python\n")
-		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/go\n")
-		fmt.Fprintf(os.Stderr, "  - paketobuildpacks/java\n")
+		logger.Error(fmt.Sprintf("No buildpack detected for app '%s'", appName), "err", err)
+		logger.Info("To configure a buildpack manually, run:")
+		logger.Info(fmt.Sprintf("  mitte apps set-buildpack %s <buildpack-id>", appName))
+		logger.Info("Common buildpack IDs:")
+		logger.Info("  - paketobuildpacks/nodejs")
+		logger.Info("  - paketobuildpacks/python")
+		logger.Info("  - paketobuildpacks/go")
+		logger.Info("  - paketobuildpacks/java")
 		os.Exit(1)
 	}
 
-	fmt.Printf("Detected buildpack for app '%s': %s\n", appName, buildpackConfig.BuildpackID)
-	fmt.Printf("Buildpack URI: %s\n", buildpackConfig.BuildpackURI)
-	fmt.Printf("\nTo use this buildpack, run:\n")
-	fmt.Printf("  mitte apps set-buildpack %s %s\n", appName, buildpackConfig.BuildpackID)
+	logger.Info(fmt.Sprintf("Detected buildpack for app '%s': %s", appName, buildpackConfig.BuildpackID))
+	logger.Info(fmt.Sprintf("Buildpack URI: %s", buildpackConfig.BuildpackURI))
+	logger.Info("To use this buildpack, run:")
+	logger.Info(fmt.Sprintf("  mitte apps set-buildpack %s %s", appName, buildpackConfig.BuildpackID))
 }
 
 func runAppsSetCommand(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	commandArgs := args[1:]
 
-	fmt.Fprintf(os.Stderr, "Setting command for app '%s' to '%s'... ", appName, strings.Join(commandArgs, " "))
+	logger.Info(fmt.Sprintf("Setting command for app '%s' to '%s'... ", appName, strings.Join(commandArgs, " ")))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -1236,32 +1237,32 @@ func runAppsSetCommand(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured to use command: %s\n", appName, strings.Join(commandArgs, " "))
-	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured to use command: %s", appName, strings.Join(commandArgs, " ")))
+	logger.Info(fmt.Sprintf("To deploy the app, run: mitte apps deploy-image %s", appName))
 }
 
 func runAppsSetUser(cmd *cobra.Command, args []string) {
 	appName := args[0]
 	user := args[1]
 
-	fmt.Fprintf(os.Stderr, "Setting user for app '%s' to '%s'... ", appName, user)
+	logger.Info(fmt.Sprintf("Setting user for app '%s' to '%s'... ", appName, user))
 
 	// Load the app
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	// Check if app exists (has domains)
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "\nError: App '%s' does not exist. Create it first with 'mitte apps create %s'\n", appName, appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
 
@@ -1270,14 +1271,14 @@ func runAppsSetUser(cmd *cobra.Command, args []string) {
 
 	// Save the app
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "\nError: Could not save app configuration: %v\n", err)
+		logger.Error("Could not save app configuration", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "done.")
+	logger.Info("done.")
 
-	fmt.Printf("Success! App '%s' is now configured to run as user: %s\n", appName, user)
-	fmt.Println("To deploy the app, run: mitte apps deploy-image", appName)
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured to run as user: %s", appName, user))
+	logger.Info(fmt.Sprintf("To deploy the app, run: mitte apps deploy-image %s", appName))
 }
 
 func runAppsEnable(cmd *cobra.Command, args []string) {
@@ -1286,22 +1287,22 @@ func runAppsEnable(cmd *cobra.Command, args []string) {
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
 
 	if !app.Disabled {
-		fmt.Printf("App '%s' is already enabled.\n", appName)
+		logger.Info(fmt.Sprintf("App '%s' is already enabled.", appName))
 		return
 	}
 
 	app.Disabled = false
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not save app state: %v\n", err)
+		logger.Error("Could not save app state", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("App '%s' enabled. Starting deployment...\n", appName)
+	logger.Info(fmt.Sprintf("App '%s' enabled. Starting deployment...", appName))
 
 	// Determine what to deploy
 	imageToDeploy := app.Image
@@ -1319,7 +1320,7 @@ func runAppsEnable(cmd *cobra.Command, args []string) {
 	// Deploy
 	deployResult, err := deployer.Deploy(ctx, appName, imageToDeploy, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Deployment failed: %v\n", err)
+		logger.Error("Deployment failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -1333,11 +1334,11 @@ func runAppsEnable(cmd *cobra.Command, args []string) {
 		authPolicy = app.Auth.Policy
 	}
 	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to update routes: %v\n", err)
+		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Success! App '%s' is now enabled and running.\n", appName)
+	logger.Info(fmt.Sprintf("Success! App '%s' is now enabled and running.", appName))
 }
 
 func runAppsDisable(cmd *cobra.Command, args []string) {
@@ -1346,78 +1347,78 @@ func runAppsDisable(cmd *cobra.Command, args []string) {
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
 
 	if app.Disabled {
-		fmt.Printf("App '%s' is already disabled.\n", appName)
+		logger.Info(fmt.Sprintf("App '%s' is already disabled.", appName))
 		return
 	}
 
 	app.Disabled = true
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not save app state: %v\n", err)
+		logger.Error("Could not save app state", "err", err)
 		os.Exit(1)
 	}
 
 	// Stop and remove container
 	if err := deployer.StopAndRemoveContainer(ctx, appName, app.ContainerName); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not stop container: %v\n", err)
+		logger.Warn("Could not stop container", "err", err)
 	}
 
 	// Remove routes
 	if err := router.DeleteRouteFile(appName); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not remove routes: %v\n", err)
+		logger.Warn("Could not remove routes", "err", err)
 	}
 
-	fmt.Printf("Success! App '%s' is now disabled.\n", appName)
+	logger.Info(fmt.Sprintf("Success! App '%s' is now disabled.", appName))
 }
 
 func runAppsListVolumes(cmd *cobra.Command, args []string) {
 	appName, err := state.ResolveAppName(args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error(fmt.Sprintf("Error: %v", err))
 		os.Exit(1)
 	}
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	if len(app.Volumes) == 0 {
-		fmt.Printf("No volumes mounted for app '%s'.\n", appName)
+		logger.Info(fmt.Sprintf("No volumes mounted for app '%s'.", appName))
 		return
 	}
 
-	fmt.Printf("Volume mounts for app '%s':\n", appName)
+	logger.Info(fmt.Sprintf("Volume mounts for app '%s':", appName))
 	for i, volume := range app.Volumes {
-		fmt.Printf("  %d. %s\n", i+1, volume)
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, volume))
 	}
 }
 
 func runAppsListPorts(cmd *cobra.Command, args []string) {
 	appName, err := state.ResolveAppName(args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error(fmt.Sprintf("Error: %v", err))
 		os.Exit(1)
 	}
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not load app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 
 	if len(app.Ports) == 0 {
-		fmt.Printf("No port mappings for app '%s'.\n", appName)
+		logger.Info(fmt.Sprintf("No port mappings for app '%s'.", appName))
 		return
 	}
 
-	fmt.Printf("Port mappings for app '%s':\n", appName)
+	logger.Info(fmt.Sprintf("Port mappings for app '%s':", appName))
 	for i, port := range app.Ports {
-		fmt.Printf("  %d. %s\n", i+1, port)
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, port))
 	}
 }

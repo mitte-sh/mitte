@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -30,14 +31,14 @@ var domainsAddCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not load app state for '%s'.\n", appName)
+			logger.Error(fmt.Sprintf("Error: Could not load app state for '%s'.", appName))
 			os.Exit(1)
 		}
 
@@ -57,19 +58,19 @@ var domainsAddCmd = &cobra.Command{
 		}
 
 		if len(newDomains) == 0 {
-			fmt.Printf("All specified domains already exist for '%s'. No changes made.\n", appName)
+			logger.Info(fmt.Sprintf("All specified domains already exist for '%s'. No changes made.", appName))
 			return
 		}
 
 		if err = app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save app state for '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to save app state for '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
 		// Create a docker client
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating Docker client: %v\n", err)
+			logger.Error(fmt.Sprintf("Error creating Docker client: %v", err))
 			os.Exit(1)
 		}
 		defer cli.Close()
@@ -77,7 +78,7 @@ var domainsAddCmd = &cobra.Command{
 		// Get the running container's port
 		port, err := deployer.GetContainerHostPort(context.Background(), cli, appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not find a running container for app '%s'. Cannot update domain.\n", appName)
+			logger.Error(fmt.Sprintf("Error: Could not find a running container for app '%s'. Cannot update domain.", appName))
 			os.Exit(1)
 		}
 
@@ -88,11 +89,11 @@ var domainsAddCmd = &cobra.Command{
 			authPolicy = app.Auth.Policy
 		}
 		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to set routes for '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to set routes for '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Successfully added %v to %s.\n", newDomains, appName)
+		logger.Info(fmt.Sprintf("Successfully added %v to %s.", newDomains, appName))
 	},
 }
 
@@ -107,14 +108,14 @@ var domainsRemoveCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not load app state for '%s'.\n", appName)
+			logger.Error(fmt.Sprintf("Error: Could not load app state for '%s'.", appName))
 			os.Exit(1)
 		}
 
@@ -136,13 +137,13 @@ var domainsRemoveCmd = &cobra.Command{
 		}
 
 		if len(actuallyRemoved) == 0 {
-			fmt.Printf("None of the specified domains were found for app '%s'. No changes made.\n", appName)
+			logger.Info(fmt.Sprintf("None of the specified domains were found for app '%s'. No changes made.", appName))
 			return
 		}
 
 		app.Domains = keptDomains
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save app state for '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to save app state for '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
@@ -152,14 +153,14 @@ var domainsRemoveCmd = &cobra.Command{
 		if len(app.Domains) > 0 {
 			cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating Docker client: %v\n", err)
+				logger.Error(fmt.Sprintf("Error creating Docker client: %v", err))
 				os.Exit(1)
 			}
 			defer cli.Close()
 
 			port, err = deployer.GetContainerHostPort(context.Background(), cli, appName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Could not find a running container for app '%s'. Cannot update domains.\n", appName)
+				logger.Error(fmt.Sprintf("Error: Could not find a running container for app '%s'. Cannot update domains.", appName))
 				os.Exit(1)
 			}
 		}
@@ -171,11 +172,11 @@ var domainsRemoveCmd = &cobra.Command{
 			authPolicy = app.Auth.Policy
 		}
 		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to set routes for '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to set routes for '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Successfully removed %v from %s.\n", actuallyRemoved, appName)
+		logger.Info(fmt.Sprintf("Successfully removed %v from %s.", actuallyRemoved, appName))
 	},
 }
 
@@ -189,25 +190,25 @@ var domainsListCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		// Load the app's current state
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not load app state for '%s'.\n", appName)
+			logger.Error(fmt.Sprintf("Error: Could not load app state for '%s'.", appName))
 			os.Exit(1)
 		}
 
 		if len(app.Domains) == 0 {
-			fmt.Printf("No custom domains configured for %s.\n", appName)
+			logger.Info(fmt.Sprintf("No custom domains configured for %s.", appName))
 			return
 		}
 
-		fmt.Printf("Custom domains for %s:\n", appName)
+		logger.Info(fmt.Sprintf("Custom domains for %s:", appName))
 		for _, domain := range app.Domains {
-			fmt.Printf("- %s\n", domain)
+			logger.Info(fmt.Sprintf("- %s", domain))
 		}
 	},
 }

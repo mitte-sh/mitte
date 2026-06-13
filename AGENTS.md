@@ -32,7 +32,7 @@
 
 - Use `gofmt` for consistent formatting
 - Use `json.MarshalIndent` with 2 spaces for JSON output
-- Use `fmt.Fprintf(os.Stderr, ...)` for user-facing output
+- Use `pkg/logger` for all user-facing output (`logger.Info`, `logger.Warn`, `logger.Error`, `logger.Fatal`)
 
 ### Types and Structs
 
@@ -48,7 +48,7 @@
 
 - Uses Cobra for CLI framework
 - Uses Docker client libraries
-- Go version: 1.24.4
+- Go version: 1.25.0
 
 ## Application Management Commands
 

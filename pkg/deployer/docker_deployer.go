@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -26,7 +27,7 @@ type DeployResult struct {
 // It also stops and removes any previous container for that app.
 // It returns the new container's ID and its published host port.
 func Deploy(ctx context.Context, appName, imageTag string, volumes []string, ports []string, containerName string, command []string, user string) (*DeployResult, error) {
-	fmt.Fprintln(os.Stderr, "-----> Starting deployment...")
+	logger.Info("Starting deployment...")
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -45,7 +46,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	}
 
 	// --- 1. Stop and remove any existing container for this app ---
-	fmt.Fprintf(os.Stderr, "-----> Checking for existing container '%s' to stop...\n", actualContainerName)
+	logger.Info(fmt.Sprintf("Checking for existing container '%s' to stop...", actualContainerName))
 	// We ignore the error here because the container might not exist on the first deploy.
 	_ = cli.ContainerStop(ctx, actualContainerName, container.StopOptions{})
 	_ = cli.ContainerRemove(ctx, actualContainerName, container.RemoveOptions{Force: true})
@@ -108,18 +109,18 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	if len(portBindings) == 0 {
 		exposedPorts, err := getExposedPorts(ctx, cli, imageTag)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not inspect image ports: %v\n", err)
+			logger.Warn("Could not inspect image ports", "err", err)
 		}
 
 		// If no ports are exposed, default to 8080 for CNB/web applications
 		if len(exposedPorts) == 0 {
-			fmt.Fprintf(os.Stderr, "-----> No exposed ports found, defaulting to port 8080 for web applications\n")
+			logger.Info("No exposed ports found, defaulting to port 8080 for web applications")
 			defaultPort, _ := nat.NewPort("tcp", "8080")
 			exposedPorts = []nat.Port{defaultPort}
 		}
 
 		if len(exposedPorts) > 0 {
-			fmt.Fprintf(os.Stderr, "-----> Auto-binding exposed ports: %v\n", exposedPorts)
+			logger.Info(fmt.Sprintf("Auto-binding exposed ports: %v", exposedPorts))
 
 			// Try to use previously assigned port if available
 			usePreviousPort := false
@@ -130,7 +131,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 			if err == nil && appState.HostPort != "" {
 				previousPort = appState.HostPort
 				usePreviousPort = true
-				fmt.Fprintf(os.Stderr, "-----> Found previous port: %s\n", previousPort)
+				logger.Info(fmt.Sprintf("Found previous port: %s", previousPort))
 			}
 
 			for i, port := range exposedPorts {
@@ -142,7 +143,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 							HostPort: previousPort,
 						},
 					}
-					fmt.Fprintf(os.Stderr, "-----> Using previous port %s for %s\n", previousPort, port)
+					logger.Info(fmt.Sprintf("Using previous port %s for %s", previousPort, port))
 				} else {
 					// Bind to a random host port (empty HostPort means random)
 					portBindings[port] = []nat.PortBinding{
@@ -157,7 +158,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	}
 
 	// --- 2. Create the new container ---
-	fmt.Fprintf(os.Stderr, "-----> Creating new container from image %s\n", imageTag)
+	logger.Info(fmt.Sprintf("Creating new container from image %s", imageTag))
 	containerConfig := &container.Config{
 		Image: imageTag,
 		Env:   envVars,
@@ -185,11 +186,11 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 
 	// --- 3. Start the container ---
-	fmt.Fprintf(os.Stderr, "-----> Starting container %s\n", createResp.ID[:12])
+	logger.Info(fmt.Sprintf("Starting container %s", createResp.ID[:12]))
 	if err = cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 		// If the error is due to port already allocated, retry with a random port
 		if isPortAllocatedError(err) {
-			fmt.Fprintf(os.Stderr, "-----> Previous port is already in use, retrying with a random port...\n")
+			logger.Info("Previous port is already in use, retrying with a random port...")
 
 			// Remove the failed container
 			_ = cli.ContainerRemove(ctx, createResp.ID, container.RemoveOptions{Force: true})
@@ -211,7 +212,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 				return nil, fmt.Errorf("failed to create container on retry: %w", err)
 			}
 
-			fmt.Fprintf(os.Stderr, "-----> Starting container %s\n", createResp.ID[:12])
+			logger.Info(fmt.Sprintf("Starting container %s", createResp.ID[:12]))
 			if err = cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 				return nil, fmt.Errorf("failed to start container: %w", err)
 			}
@@ -225,7 +226,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "-----> Container is running. First mapped port: %s\n", hostPort)
+	logger.Info(fmt.Sprintf("Container is running. First mapped port: %s", hostPort))
 
 	return &DeployResult{
 		ContainerID: createResp.ID,
@@ -347,13 +348,13 @@ func StopAndRemoveContainer(ctx context.Context, appName string, containerName s
 	if actualContainerName == "" {
 		actualContainerName = strings.ToLower(appName)
 	}
-	fmt.Fprintf(os.Stderr, "-----> Stopping and removing container '%s'...\n", actualContainerName)
+	logger.Info(fmt.Sprintf("Stopping and removing container '%s'...", actualContainerName))
 
 	// We don't care about errors here, as the container might already be gone.
 	_ = cli.ContainerStop(ctx, actualContainerName, container.StopOptions{})
 	_ = cli.ContainerRemove(ctx, actualContainerName, container.RemoveOptions{Force: true})
 
-	fmt.Fprintln(os.Stderr, "-----> Container stopped and removed.")
+	logger.Info("Container stopped and removed.")
 	return nil
 }
 
@@ -365,7 +366,7 @@ func PruneAppImages(ctx context.Context, appName string) error {
 	}
 	defer cli.Close()
 
-	fmt.Fprintf(os.Stderr, "-----> Pruning images for app '%s'...\n", appName)
+	logger.Info(fmt.Sprintf("Pruning images for app '%s'...", appName))
 
 	// Create a filter to find all images with a tag like "appname:*"
 	filterArgs := filters.NewArgs()
@@ -377,19 +378,19 @@ func PruneAppImages(ctx context.Context, appName string) error {
 	}
 
 	if len(images) == 0 {
-		fmt.Fprintln(os.Stderr, "-----> No images to prune.")
+		logger.Info("No images to prune.")
 		return nil
 	}
 
 	for _, img := range images {
-		fmt.Fprintf(os.Stderr, "       - Removing image %s\n", img.ID[:12])
+		logger.Info(fmt.Sprintf("       - Removing image %s", img.ID[:12]))
 		// We don't stop on the first error, try to delete as many as possible.
 		_, err := cli.ImageRemove(ctx, img.ID, image.RemoveOptions{Force: true})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "         Warning: could not remove image %s: %v\n", img.ID[:12], err)
+			logger.Warn("could not remove image", "image", img.ID[:12], "err", err)
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "-----> Image pruning complete.")
+	logger.Info("Image pruning complete.")
 	return nil
 }

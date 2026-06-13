@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -24,13 +25,13 @@ and updates Caddy configuration to point to the correct ports.
 
 Use this after Docker daemon restart or when Caddy shows "connection refused" errors.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(os.Stderr, "-----> Scanning for broken routes...")
+		logger.Error("-----> Scanning for broken routes...")
 
 		// Get all app state files
 		appsDir := "/var/lib/mitte/apps"
 		files, err := os.ReadDir(appsDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not read apps directory: %v\n", err)
+			logger.Error("Could not read apps directory", "err", err)
 			os.Exit(1)
 		}
 
@@ -43,19 +44,19 @@ Use this after Docker daemon restart or when Caddy shows "connection refused" er
 			}
 
 			appName := strings.TrimSuffix(file.Name(), ".json")
-			fmt.Fprintf(os.Stderr, "-----> Checking app: %s\n", appName)
+			logger.Error(fmt.Sprintf("-----> Checking app: %s", appName))
 
 			// Load app state
 			app, err := state.Load(appName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  !! Warning: Could not load state for %s: %v\n", appName, err)
+				logger.Warn(fmt.Sprintf("Could not load state for %s", appName), "err", err)
 				continue
 			}
 
 			// Check if container exists and get current port
 			cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  !! Error: Could not create Docker client: %v\n", err)
+				logger.Error("Could not create Docker client", "err", err)
 				continue
 			}
 			defer cli.Close()
@@ -68,22 +69,22 @@ Use this after Docker daemon restart or when Caddy shows "connection refused" er
 			// Get current host port
 			currentPort, err := deployer.GetContainerHostPort(ctx, cli, containerName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  !! Warning: Container not running or no port found for %s: %v\n", appName, err)
+				logger.Warn(fmt.Sprintf("Container not running or no port found for %s", appName), "err", err)
 				continue
 			}
 
 			// Check if port has changed
 			if app.HostPort == currentPort {
-				fmt.Fprintf(os.Stderr, "  ✓ Route is correct (port %s)\n", currentPort)
+				logger.Error(fmt.Sprintf("  ✓ Route is correct (port %s)", currentPort))
 				continue
 			}
 
-			fmt.Fprintf(os.Stderr, "  ! Port changed: %s -> %s\n", app.HostPort, currentPort)
+			logger.Error(fmt.Sprintf("  ! Port changed: %s -> %s", app.HostPort, currentPort))
 
 			// Update app state
 			app.HostPort = currentPort
 			if err := app.Save(); err != nil {
-				fmt.Fprintf(os.Stderr, "  !! Warning: Could not save app state: %v\n", err)
+				logger.Warn("Could not save app state", "err", err)
 			}
 
 			// Update Caddy route
@@ -94,20 +95,20 @@ Use this after Docker daemon restart or when Caddy shows "connection refused" er
 					authPolicy = app.Auth.Policy
 				}
 				if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy); err != nil {
-					fmt.Fprintf(os.Stderr, "  !! Error: Could not update Caddy route: %v\n", err)
+					logger.Error("Could not update Caddy route", "err", err)
 				} else {
-					fmt.Fprintf(os.Stderr, "  ✓ Updated Caddy route to port %s\n", currentPort)
+					logger.Error(fmt.Sprintf("  ✓ Updated Caddy route to port %s", currentPort))
 					fixedCount++
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "  ! No domains configured for this app\n")
+				logger.Error("  ! No domains configured for this app")
 			}
 		}
 
 		if fixedCount > 0 {
-			fmt.Printf("\nFixed %d broken route(s).\n", fixedCount)
+			logger.Info(fmt.Sprintf("Fixed %d broken route(s).", fixedCount))
 		} else {
-			fmt.Println("No broken routes found.")
+			logger.Info("No broken routes found.")
 		}
 	},
 }

@@ -14,6 +14,8 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // ErrorLine represents a single line of error detail from the Docker daemon
@@ -35,7 +37,7 @@ type StreamLine struct {
 // BuildImage uses the Docker SDK to build an image from a given directory.
 // It returns the unique image tag and any error that occurred.
 func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchName string, envVars map[string]string) (string, error) {
-	fmt.Fprintln(os.Stderr, "-----> Connecting to Docker daemon...")
+	logger.Info("Connecting to Docker daemon...")
 
 	// Try different API versions for Docker 29.x compatibility
 	// Docker 29.x requires API 1.44+, but SDK might default to 1.42
@@ -45,7 +47,7 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 	var lastErr error
 
 	for _, apiVersion := range apiVersions {
-		fmt.Fprintf(os.Stderr, "-----> Trying Docker API version: %s\n", apiVersion)
+		logger.Info(fmt.Sprintf("Trying Docker API version: %s", apiVersion))
 
 		var opts []client.Opt
 		opts = append(opts, client.FromEnv)
@@ -61,7 +63,7 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 		cli, err = client.NewClientWithOpts(opts...)
 		if err != nil {
 			lastErr = err
-			fmt.Fprintf(os.Stderr, "-----> Failed with API %s: %v\n", apiVersion, err)
+			logger.Error(fmt.Sprintf("Failed with API %s: %v", apiVersion, err))
 			continue
 		}
 
@@ -70,12 +72,12 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 		if err != nil {
 			lastErr = err
 			cli.Close()
-			fmt.Fprintf(os.Stderr, "-----> Ping failed with API %s: %v\n", apiVersion, err)
+			logger.Error(fmt.Sprintf("Ping failed with API %s: %v", apiVersion, err))
 			continue
 		}
 
 		// Success!
-		fmt.Fprintf(os.Stderr, "-----> Connected with Docker API version: %s\n", apiVersion)
+		logger.Info(fmt.Sprintf("Connected with Docker API version: %s", apiVersion))
 		break
 	}
 
@@ -98,13 +100,13 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 	}
 	imageTag := fmt.Sprintf("%s:%s", appName, shortHash)
 
-	fmt.Fprintf(os.Stderr, "-----> Creating image tag: %s\n", imageTag)
+	logger.Info(fmt.Sprintf("Creating image tag: %s", imageTag))
 
 	// --- 2. Create the build context (a tarball of the build directory) ---
 	var buf bytes.Buffer
 	tarWriter := tar.NewWriter(&buf)
 
-	fmt.Fprintln(os.Stderr, "-----> Creating build context tarball...")
+	logger.Info("Creating build context tarball...")
 	err = filepath.Walk(buildDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -148,7 +150,7 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 	buildContext := bytes.NewReader(buf.Bytes())
 
 	// --- 3. Build the Docker image ---
-	fmt.Fprintln(os.Stderr, "-----> Building image... (This may take a moment)")
+	logger.Info("Building image... (This may take a moment)")
 
 	// Convert environment variables to build args for Docker
 	buildArgs := make(map[string]*string)
@@ -189,11 +191,11 @@ func BuildImage(ctx context.Context, appName, buildDir, repoPath string, branchN
 			return "", fmt.Errorf("build failed: %v", errorMsg)
 		}
 		if streamMsg, ok := lineMap["stream"]; ok {
-			fmt.Fprint(os.Stderr, streamMsg) // Print the build step (e.g., "Step 1/5 : FROM ...")
+			logger.Info(streamMsg.(string)) // Print the build step (e.g., "Step 1/5 : FROM ...")
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n-----> Successfully built image %s\n", imageTag)
+	logger.Info(fmt.Sprintf("Successfully built image %s", imageTag))
 	return imageTag, nil
 }
 

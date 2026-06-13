@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/deployer"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -30,32 +31,32 @@ var routesCheckCmd = &cobra.Command{
 		// Load app state
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+			logger.Error("Could not load app state", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("App: %s\n", appName)
-		fmt.Printf("Domains: %v\n", app.Domains)
-		fmt.Printf("Stored Port: %s\n", app.HostPort)
+		logger.Info(fmt.Sprintf("App: %s", appName))
+		logger.Info(fmt.Sprintf("Domains: %v", app.Domains))
+		logger.Info(fmt.Sprintf("Stored Port: %s", app.HostPort))
 
 		// Check if route file exists
 		exists, err := router.RouteExistsFile(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking route: %v\n", err)
+			logger.Error(fmt.Sprintf("Error checking route: %v", err))
 			os.Exit(1)
 		}
 
 		if exists {
-			fmt.Println("Route file: ✅ Exists")
+			logger.Info("Route file: ✅ Exists")
 		} else {
-			fmt.Println("Route file: ❌ Missing")
+			logger.Info("Route file: ❌ Missing")
 		}
 
 		// Check if container is running and get current port
 		ctx := context.Background()
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not create Docker client: %v\n", err)
+			logger.Error("Could not create Docker client", "err", err)
 			os.Exit(1)
 		}
 		defer cli.Close()
@@ -67,14 +68,14 @@ var routesCheckCmd = &cobra.Command{
 
 		currentPort, err := deployer.GetContainerHostPort(ctx, cli, containerName)
 		if err != nil {
-			fmt.Printf("Container status: ❌ Not running or no port found: %v\n", err)
+			logger.Info(fmt.Sprintf("Container status: ❌ Not running or no port found: %v", err))
 		} else {
-			fmt.Printf("Container status: ✅ Running on port %s\n", currentPort)
+			logger.Info(fmt.Sprintf("Container status: ✅ Running on port %s", currentPort))
 
 			if app.HostPort == currentPort {
-				fmt.Println("Port match: ✅ Stored port matches current port")
+				logger.Info("Port match: ✅ Stored port matches current port")
 			} else {
-				fmt.Printf("Port match: ❌ Mismatch (stored: %s, current: %s)\n", app.HostPort, currentPort)
+				logger.Info(fmt.Sprintf("Port match: ❌ Mismatch (stored: %s, current: %s)", app.HostPort, currentPort))
 			}
 		}
 	},
@@ -91,21 +92,21 @@ var routesUpdateCmd = &cobra.Command{
 		// Load app state
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not load app state: %v\n", err)
+			logger.Error("Could not load app state", "err", err)
 			os.Exit(1)
 		}
 
 		if len(app.Domains) == 0 {
-			fmt.Fprintf(os.Stderr, "Error: App %s has no domains configured\n", appName)
+			logger.Error(fmt.Sprintf("Error: App %s has no domains configured", appName))
 			os.Exit(1)
 		}
 
-		fmt.Printf("Updating route for %s to port %s...\n", appName, newPort)
+		logger.Info(fmt.Sprintf("Updating route for %s to port %s...", appName, newPort))
 
 		// Update app state
 		app.HostPort = newPort
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not save app state: %v\n", err)
+			logger.Warn("Could not save app state", "err", err)
 		}
 
 		// Update Caddy route
@@ -115,11 +116,11 @@ var routesUpdateCmd = &cobra.Command{
 			authPolicy = app.Auth.Policy
 		}
 		if err := router.SetAppRoutesWithAuth(appName, app.Domains, newPort, authEnabled, authPolicy); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not update Caddy route: %v\n", err)
+			logger.Error("Could not update Caddy route", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("✅ Route updated successfully\n")
+		logger.Info("✅ Route updated successfully")
 	},
 }
 

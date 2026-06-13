@@ -12,6 +12,8 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // EnsureContainer creates and starts the Authelia container if it's not already running.
@@ -26,11 +28,11 @@ func EnsureContainer(ctx context.Context) error {
 	inspect, err := cli.ContainerInspect(ctx, ContainerName)
 	if err == nil {
 		if inspect.State.Running {
-			fmt.Fprintf(os.Stderr, "-----> Authelia container is already running.\n")
+			logger.Info("Authelia container is already running.")
 			return nil
 		}
 		// Container exists but not running, start it
-		fmt.Fprintf(os.Stderr, "-----> Starting existing Authelia container...\n")
+		logger.Info("Starting existing Authelia container...")
 		if err := cli.ContainerStart(ctx, ContainerName, container.StartOptions{}); err != nil {
 			return fmt.Errorf("failed to start Authelia container: %w", err)
 		}
@@ -38,7 +40,7 @@ func EnsureContainer(ctx context.Context) error {
 	}
 
 	// Pull the Authelia image
-	fmt.Fprintf(os.Stderr, "-----> Pulling Authelia image...\n")
+	logger.Info("Pulling Authelia image...")
 	reader, err := cli.ImagePull(ctx, AutheliaImage, image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to pull Authelia image: %w", err)
@@ -47,7 +49,7 @@ func EnsureContainer(ctx context.Context) error {
 	reader.Close()
 
 	// Create the container
-	fmt.Fprintf(os.Stderr, "-----> Creating Authelia container...\n")
+	logger.Info("Creating Authelia container...")
 
 	containerPort := nat.Port(AutheliaPort + "/tcp")
 
@@ -83,12 +85,12 @@ func EnsureContainer(ctx context.Context) error {
 	}
 
 	// Start the container
-	fmt.Fprintf(os.Stderr, "-----> Starting Authelia container...\n")
+	logger.Info("Starting Authelia container...")
 	if err := cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("failed to start Authelia container: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Authelia container started successfully.\n")
+	logger.Info("Authelia container started successfully.")
 	return nil
 }
 
@@ -100,12 +102,12 @@ func StopContainer(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	fmt.Fprintf(os.Stderr, "-----> Stopping Authelia container...\n")
+	logger.Info("Stopping Authelia container...")
 
 	timeout := 10
 	if err := cli.ContainerStop(ctx, ContainerName, container.StopOptions{Timeout: &timeout}); err != nil {
 		if !client.IsErrNotFound(err) {
-			fmt.Fprintf(os.Stderr, "Warning: could not stop container: %v\n", err)
+			logger.Warn("could not stop container", "err", err)
 		}
 	}
 
@@ -115,7 +117,7 @@ func StopContainer(ctx context.Context) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Authelia container stopped and removed.\n")
+	logger.Info("Authelia container stopped and removed.")
 	return nil
 }
 
@@ -127,14 +129,14 @@ func RestartContainer(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	fmt.Fprintf(os.Stderr, "-----> Restarting Authelia container to apply config changes...\n")
+	logger.Info("Restarting Authelia container to apply config changes...")
 
 	timeout := 10
 	if err := cli.ContainerRestart(ctx, ContainerName, container.StopOptions{Timeout: &timeout}); err != nil {
 		return fmt.Errorf("failed to restart Authelia container: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Authelia container restarted successfully.\n")
+	logger.Info("Authelia container restarted successfully.")
 	return nil
 }
 

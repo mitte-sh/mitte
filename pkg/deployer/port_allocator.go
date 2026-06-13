@@ -3,11 +3,12 @@ package deployer
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 const (
@@ -89,16 +90,16 @@ func GetAppPort(ctx context.Context, cli *client.Client, appName string) (int, e
 
 	if !usedPorts[deterministicPort] {
 		usedPorts[deterministicPort] = true
-		fmt.Fprintf(os.Stderr, "-----> Using deterministic port %d for %s\n", deterministicPort, appName)
+		logger.Info(fmt.Sprintf("Using deterministic port %d for %s", deterministicPort, appName))
 		return deterministicPort, nil
 	}
 
 	// Deterministic port is taken, find next available
-	fmt.Fprintf(os.Stderr, "-----> Deterministic port %d for %s is in use, finding alternative\n", deterministicPort, appName)
+	logger.Info(fmt.Sprintf("Deterministic port %d for %s is in use, finding alternative", deterministicPort, appName))
 	for port := deterministicPort + 1; port <= maxPort; port++ {
 		if !usedPorts[port] {
 			usedPorts[port] = true
-			fmt.Fprintf(os.Stderr, "-----> Using alternative port %d for %s\n", port, appName)
+			logger.Info(fmt.Sprintf("Using alternative port %d for %s", port, appName))
 			return port, nil
 		}
 	}
@@ -107,7 +108,7 @@ func GetAppPort(ctx context.Context, cli *client.Client, appName string) (int, e
 	for port := minPort; port < deterministicPort; port++ {
 		if !usedPorts[port] {
 			usedPorts[port] = true
-			fmt.Fprintf(os.Stderr, "-----> Using wrapped port %d for %s\n", port, appName)
+			logger.Info(fmt.Sprintf("Using wrapped port %d for %s", port, appName))
 			return port, nil
 		}
 	}

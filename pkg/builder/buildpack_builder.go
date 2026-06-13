@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // BuildpackConfig holds configuration for buildpack builds
@@ -207,7 +209,7 @@ func DetectRubyVersion(gemfilePath string) string {
 
 // updatePackCLI attempts to update pack CLI to latest version for better Docker 29.x compatibility
 func updatePackCLI() error {
-	fmt.Fprintln(os.Stderr, "-----> Downloading latest pack CLI...")
+	logger.Info("Downloading latest pack CLI...")
 
 	// Download v0.39.0 which has Docker API version negotiation fix
 	url := "https://github.com/buildpacks/pack/releases/download/v0.39.0/pack-v0.39.0-linux.tgz"
@@ -254,7 +256,7 @@ func updatePackCLI() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		// Can't update pack CLI without home directory
-		fmt.Fprintln(os.Stderr, "-----> Warning: Could not determine home directory, skipping pack CLI update")
+		logger.Warn("Could not determine home directory, skipping pack CLI update")
 		return nil
 	}
 
@@ -275,8 +277,8 @@ func updatePackCLI() error {
 		return fmt.Errorf("failed to write pack binary: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Pack CLI updated to %s\n", installPath)
-	fmt.Fprintln(os.Stderr, "-----> Note: You may need to add ~/.mitte/bin to your PATH")
+	logger.Info(fmt.Sprintf("Pack CLI updated to %s", installPath))
+	logger.Info("Note: You may need to add ~/.mitte/bin to your PATH")
 
 	// Clean up
 	os.Remove(tmpFile)
@@ -381,13 +383,13 @@ CMD ["./main"]`
 		return fmt.Errorf("failed to write Dockerfile: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Created Dockerfile for %s\n", buildpackID)
+	logger.Info(fmt.Sprintf("Created Dockerfile for %s", buildpackID))
 	return nil
 }
 
 // BuildWithBuildpack builds an application using Cloud Native Buildpacks
 func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branchName string, buildpackConfig *BuildpackConfig, envVars map[string]string) (string, error) {
-	fmt.Fprintln(os.Stderr, "-----> Building with Cloud Native Buildpacks...")
+	logger.Info("Building with Cloud Native Buildpacks...")
 
 	// Get Git commit hash for tagging
 	commitHash, err := getGitCommitHash(repoPath, branchName)
@@ -401,9 +403,9 @@ func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branch
 	}
 	imageTag := fmt.Sprintf("%s:%s", appName, shortHash)
 
-	fmt.Fprintf(os.Stderr, "-----> Creating image tag: %s\n", imageTag)
-	fmt.Fprintf(os.Stderr, "-----> Using buildpack: %s\n", buildpackConfig.BuildpackID)
-	fmt.Fprintf(os.Stderr, "-----> Buildpack URI: %s\n", buildpackConfig.BuildpackURI)
+	logger.Info(fmt.Sprintf("Creating image tag: %s", imageTag))
+	logger.Info(fmt.Sprintf("Using buildpack: %s", buildpackConfig.BuildpackID))
+	logger.Info(fmt.Sprintf("Buildpack URI: %s", buildpackConfig.BuildpackURI))
 
 	// Create temporary directories for buildpack lifecycle
 	layersDir, err := os.MkdirTemp("", "mitte-buildpack-layers-")
@@ -433,24 +435,24 @@ func BuildWithBuildpack(ctx context.Context, appName, buildDir, repoPath, branch
 	}
 
 	// Try lifecycle builder first (direct buildpack execution)
-	fmt.Fprintln(os.Stderr, "-----> Attempting direct lifecycle build (no pack CLI dependency)...")
+	logger.Info("Attempting direct lifecycle build (no pack CLI dependency)...")
 	lifecycleImageTag, lifecycleErr := BuildWithLifecycle(ctx, appName, buildDir, repoPath, branchName, buildpackConfig, envVars)
 	if lifecycleErr == nil {
 		return lifecycleImageTag, nil
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Lifecycle build failed: %v\n", lifecycleErr)
-	fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile creation...")
+	logger.Error(fmt.Sprintf("Lifecycle build failed: %v", lifecycleErr))
+	logger.Info("Falling back to Dockerfile creation...")
 
 	// Create Dockerfile based on detected buildpack
 	if buildpackConfig != nil {
 		if err := createDockerfileForBuildpack(buildDir, buildpackConfig.BuildpackID, envVars); err != nil {
-			fmt.Fprintf(os.Stderr, "-----> Could not create Dockerfile: %v\n", err)
+			logger.Error(fmt.Sprintf("Could not create Dockerfile: %v", err))
 			return "", fmt.Errorf("failed to create Dockerfile from buildpack: %w", err)
 		}
 
 		// Use Docker builder with the created Dockerfile
-		fmt.Fprintln(os.Stderr, "-----> Created Dockerfile, using Docker builder...")
+		logger.Info("Created Dockerfile, using Docker builder...")
 		dockerImageTag, err := BuildImage(ctx, appName, buildDir, repoPath, branchName, envVars)
 		if err != nil {
 			return "", fmt.Errorf("Docker builder with created Dockerfile failed: %w", err)

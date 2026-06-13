@@ -15,11 +15,13 @@ import (
 	"github.com/docker/docker/api/types"
 	dockerImage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // BuildWithLifecycle builds an application using Cloud Native Buildpacks lifecycle directly
 func BuildWithLifecycle(ctx context.Context, appName, buildDir, repoPath, branchName string, buildpackConfig *BuildpackConfig, envVars map[string]string) (string, error) {
-	fmt.Fprintln(os.Stderr, "-----> Building with Cloud Native Buildpacks lifecycle...")
+	logger.Info("Building with Cloud Native Buildpacks lifecycle...")
 
 	// Get Git commit hash for tagging
 	commitHash, err := getGitCommitHash(repoPath, branchName)
@@ -33,7 +35,7 @@ func BuildWithLifecycle(ctx context.Context, appName, buildDir, repoPath, branch
 	}
 	imageTag := fmt.Sprintf("%s:%s", appName, shortHash)
 
-	fmt.Fprintf(os.Stderr, "-----> Creating image tag: %s\n", imageTag)
+	logger.Info(fmt.Sprintf("Creating image tag: %s", imageTag))
 
 	// Create temporary directories for lifecycle phases
 	workDir, err := os.MkdirTemp("", "mitte-lifecycle-work-")
@@ -72,72 +74,72 @@ func BuildWithLifecycle(ctx context.Context, appName, buildDir, repoPath, branch
 	}
 
 	// Step 1: Set up Docker client with proper API version
-	fmt.Fprintln(os.Stderr, "-----> Setting up Docker client...")
+	logger.Info("Setting up Docker client...")
 	dockerClient, err := setupDockerClient(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Failed to setup Docker client: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Failed to setup Docker client: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("docker client setup failed: %w", err)
 	}
 	defer dockerClient.Close()
 
 	// Step 2: Pull builder image
 	builderImage := "paketobuildpacks/builder:base"
-	fmt.Fprintf(os.Stderr, "-----> Pulling builder image: %s\n", builderImage)
+	logger.Info(fmt.Sprintf("Pulling builder image: %s", builderImage))
 	if err := pullBuilderImage(ctx, dockerClient, builderImage); err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Failed to pull builder image: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Failed to pull builder image: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("builder image pull failed: %w", err)
 	}
 
 	// Step 3: Run detector phase
-	fmt.Fprintln(os.Stderr, "-----> Running detector phase...")
+	logger.Info("Running detector phase...")
 	group, plan, err := runDetectorPhase(ctx, buildDir, platformDir, builderImage, dockerClient)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Detector phase failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Detector phase failed: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("detector phase failed: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Detected buildpack group: %v\n", group.Group)
-	fmt.Fprintf(os.Stderr, "-----> Build plan has %d entries\n", len(plan.Entries))
+	logger.Info(fmt.Sprintf("Detected buildpack group: %v", group.Group))
+	logger.Info(fmt.Sprintf("Build plan has %d entries", len(plan.Entries)))
 
 	// Step 4: Run analyzer phase
-	fmt.Fprintln(os.Stderr, "-----> Running analyzer phase...")
+	logger.Info("Running analyzer phase...")
 	analyzed, err := runAnalyzerPhase(ctx, imageTag, dockerClient)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Analyzer phase failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Analyzer phase failed: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("analyzer phase failed: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Analysis complete: %v\n", analyzed)
+	logger.Info(fmt.Sprintf("Analysis complete: %v", analyzed))
 
 	// Step 5: Run builder phase
-	fmt.Fprintln(os.Stderr, "-----> Running builder phase...")
+	logger.Info("Running builder phase...")
 	buildMD, err := runBuilderPhase(ctx, buildDir, layersDir, platformDir, group, plan, analyzed, dockerClient)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Builder phase failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Builder phase failed: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("builder phase failed: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Build complete: %v\n", buildMD)
+	logger.Info(fmt.Sprintf("Build complete: %v", buildMD))
 
 	// Step 6: Run exporter phase
-	fmt.Fprintln(os.Stderr, "-----> Running exporter phase...")
+	logger.Info("Running exporter phase...")
 	exportReport, err := runExporterPhase(ctx, imageTag, layersDir, buildDir, buildpackConfig, dockerClient)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "-----> Exporter phase failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "-----> Falling back to Dockerfile approach...")
+		logger.Error(fmt.Sprintf("Exporter phase failed: %v", err))
+		logger.Info("Falling back to Dockerfile approach...")
 		return "", fmt.Errorf("exporter phase failed: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Export complete: %v\n", exportReport)
+	logger.Info(fmt.Sprintf("Export complete: %v", exportReport))
 
 	// For now, return success even with placeholder implementations
 	// TODO: Implement full phase logic
-	fmt.Fprintln(os.Stderr, "-----> Lifecycle phases completed (placeholder implementations)")
+	logger.Info("Lifecycle phases completed (placeholder implementations)")
 	return imageTag, nil
 }
 
@@ -147,7 +149,7 @@ func setupDockerClient(ctx context.Context) (*client.Client, error) {
 	apiVersions := []string{"1.50", "1.49", "1.48", "1.47", "1.46", "1.45", "1.44", ""}
 
 	for _, apiVersion := range apiVersions {
-		fmt.Fprintf(os.Stderr, "-----> Trying Docker API version: %s\n", apiVersion)
+		logger.Info(fmt.Sprintf("Trying Docker API version: %s", apiVersion))
 
 		var opts []client.Opt
 		opts = append(opts, client.FromEnv)
@@ -161,7 +163,7 @@ func setupDockerClient(ctx context.Context) (*client.Client, error) {
 
 		dockerClient, err := client.NewClientWithOpts(opts...)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "-----> Failed with API %s: %v\n", apiVersion, err)
+			logger.Error(fmt.Sprintf("Failed with API %s: %v", apiVersion, err))
 			continue
 		}
 
@@ -169,12 +171,12 @@ func setupDockerClient(ctx context.Context) (*client.Client, error) {
 		_, err = dockerClient.Ping(ctx)
 		if err != nil {
 			dockerClient.Close()
-			fmt.Fprintf(os.Stderr, "-----> Ping failed with API %s: %v\n", apiVersion, err)
+			logger.Error(fmt.Sprintf("Ping failed with API %s: %v", apiVersion, err))
 			continue
 		}
 
 		// Success!
-		fmt.Fprintf(os.Stderr, "-----> Connected with Docker API version: %s\n", apiVersion)
+		logger.Info(fmt.Sprintf("Connected with Docker API version: %s", apiVersion))
 		return dockerClient, nil
 	}
 
@@ -203,7 +205,7 @@ func pullBuilderImage(ctx context.Context, dockerClient *client.Client, builderI
 
 // runDetectorPhase runs the detector phase to identify buildpacks
 func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage string, dockerClient *client.Client) (buildpack.Group, files.Plan, error) {
-	fmt.Fprintln(os.Stderr, "-----> Running basic detector phase...")
+	logger.Info("Running basic detector phase...")
 
 	// For now, implement a simple detector based on file presence
 	// This is a simplified version - real detector would run buildpack detect scripts
@@ -213,7 +215,7 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 
 	// Check for Java buildpack
 	if hasFile(appDir, "pom.xml") || hasFile(appDir, "build.gradle") || hasFile(appDir, "build.gradle.kts") {
-		fmt.Fprintln(os.Stderr, "-----> Detected Java application")
+		logger.Info("Detected Java application")
 		groupElements = append(groupElements, buildpack.GroupElement{
 			ID:      "paketo-buildpacks/java",
 			Version: "latest",
@@ -228,7 +230,7 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 		})
 	} else if hasFile(appDir, "Gemfile") {
 		// Check for Ruby buildpack (Rails apps often have both Gemfile and package.json)
-		fmt.Fprintln(os.Stderr, "-----> Detected Ruby application")
+		logger.Info("Detected Ruby application")
 		groupElements = append(groupElements, buildpack.GroupElement{
 			ID:      "paketo-buildpacks/ruby",
 			Version: "latest",
@@ -243,7 +245,7 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 		})
 	} else if hasFile(appDir, "package.json") {
 		// Check for Node.js buildpack
-		fmt.Fprintln(os.Stderr, "-----> Detected Node.js application")
+		logger.Info("Detected Node.js application")
 		groupElements = append(groupElements, buildpack.GroupElement{
 			ID:      "paketo-buildpacks/nodejs",
 			Version: "latest",
@@ -258,7 +260,7 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 		})
 	} else if hasFile(appDir, "requirements.txt") || hasFile(appDir, "Pipfile") || hasFile(appDir, "pyproject.toml") {
 		// Check for Python buildpack
-		fmt.Fprintln(os.Stderr, "-----> Detected Python application")
+		logger.Info("Detected Python application")
 		groupElements = append(groupElements, buildpack.GroupElement{
 			ID:      "paketo-buildpacks/python",
 			Version: "latest",
@@ -273,7 +275,7 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 		})
 	} else if hasFile(appDir, "go.mod") || hasFile(appDir, "go.sum") || hasFile(appDir, "main.go") {
 		// Check for Go buildpack
-		fmt.Fprintln(os.Stderr, "-----> Detected Go application")
+		logger.Info("Detected Go application")
 		groupElements = append(groupElements, buildpack.GroupElement{
 			ID:      "paketo-buildpacks/go",
 			Version: "latest",
@@ -298,17 +300,17 @@ func runDetectorPhase(ctx context.Context, appDir, platformDir, builderImage str
 
 // runAnalyzerPhase runs the analyzer phase
 func runAnalyzerPhase(ctx context.Context, imageRef string, dockerClient *client.Client) (files.Analyzed, error) {
-	fmt.Fprintln(os.Stderr, "-----> Running analyzer phase...")
+	logger.Info("Running analyzer phase...")
 
 	// Check if the image exists
 	_, _, err := dockerClient.ImageInspectWithRaw(ctx, imageRef)
 	if err != nil {
 		// If image doesn't exist, that's fine - return empty analysis
-		fmt.Fprintf(os.Stderr, "-----> No previous image found for %s, starting fresh\n", imageRef)
+		logger.Info(fmt.Sprintf("No previous image found for %s, starting fresh", imageRef))
 		return files.Analyzed{}, nil
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Found previous image: %s\n", imageRef)
+	logger.Info(fmt.Sprintf("Found previous image: %s", imageRef))
 
 	// For now, return basic analysis
 	// TODO: Implement full analysis using lifecycle library
@@ -319,7 +321,7 @@ func runAnalyzerPhase(ctx context.Context, imageRef string, dockerClient *client
 
 // runBuilderPhase runs the builder phase
 func runBuilderPhase(ctx context.Context, appDir, layersDir, platformDir string, group buildpack.Group, plan files.Plan, analyzed files.Analyzed, dockerClient *client.Client) (*files.BuildMetadata, error) {
-	fmt.Fprintln(os.Stderr, "-----> Running builder phase...")
+	logger.Info("Running builder phase...")
 
 	// For each buildpack in the group, simulate execution by creating layer structure
 	for _, bp := range group.Group {
@@ -333,10 +335,10 @@ func runBuilderPhase(ctx context.Context, appDir, layersDir, platformDir string,
 			return nil, fmt.Errorf("failed to create layer structure for %s: %w", bp.ID, err)
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Simulated buildpack execution for %s\n", bp.ID)
+		logger.Info(fmt.Sprintf("Simulated buildpack execution for %s", bp.ID))
 	}
 
-	fmt.Fprintln(os.Stderr, "-----> All buildpacks completed successfully")
+	logger.Info("All buildpacks completed successfully")
 
 	// Return basic build metadata
 	return &files.BuildMetadata{
@@ -346,7 +348,7 @@ func runBuilderPhase(ctx context.Context, appDir, layersDir, platformDir string,
 
 // runExporterPhase runs the exporter phase
 func runExporterPhase(ctx context.Context, imageRef, layersDir, buildDir string, buildpackConfig *BuildpackConfig, dockerClient *client.Client) (files.Report, error) {
-	fmt.Fprintln(os.Stderr, "-----> Running exporter phase...")
+	logger.Info("Running exporter phase...")
 
 	// Determine the application type and create appropriate Dockerfile
 	var dockerfileContent string
@@ -704,7 +706,7 @@ echo 'CNB lifecycle completed successfully!'"]
 	}
 
 	// Build the final image
-	fmt.Fprintf(os.Stderr, "-----> Building final image: %s\n", imageRef)
+	logger.Info(fmt.Sprintf("Building final image: %s", imageRef))
 
 	buildContext, err := os.Open(tarPath)
 	if err != nil {
@@ -737,7 +739,7 @@ echo 'CNB lifecycle completed successfully!'"]
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "-----> Successfully built image: %s\n", imageRef)
+	logger.Info(fmt.Sprintf("Successfully built image: %s", imageRef))
 
 	return files.Report{
 		Image: files.ImageReport{

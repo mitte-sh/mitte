@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -20,18 +21,18 @@ var appsRestartCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Restarting application '%s'...\n", appName)
+		logger.Error(fmt.Sprintf("-----> Restarting application '%s'...", appName))
 
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to restart application: %v\n", err)
+			logger.Error("Failed to restart application", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Application '%s' restarted successfully.\n", appName)
+		logger.Info(fmt.Sprintf("Application '%s' restarted successfully.", appName))
 	},
 }
 

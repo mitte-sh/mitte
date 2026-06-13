@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/pkg/stdcopy"
 	"github.com/spf13/cobra"
 
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -41,7 +42,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+		logger.Error("Could not connect to Docker daemon", "err", err)
 		os.Exit(1)
 	}
 	defer cli.Close()
@@ -56,14 +57,14 @@ func runLogs(cmd *cobra.Command, args []string) {
 
 	appName, err := state.ResolveAppName(userInput)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error("", "err", err)
 		os.Exit(1)
 	}
 
 	// We use the appName as the containerName, as per our deployer's convention.
 	logStream, err := cli.ContainerLogs(ctx, appName, options)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not get logs for app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Could not get logs for app '%s'", appName), "err", err)
 		os.Exit(1)
 	}
 	defer logStream.Close()
@@ -73,7 +74,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	// and write the stdout and stderr portions to the correct writers.
 	_, err = stdcopy.StdCopy(os.Stdout, os.Stderr, logStream)
 	if err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "Error streaming logs: %v\n", err)
+		logger.Error(fmt.Sprintf("Error streaming logs: %v", err))
 		os.Exit(1)
 	}
 }

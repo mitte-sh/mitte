@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // sshHandlerCmd is the entry point for all non-interactive commands via SSH.
@@ -69,7 +71,7 @@ func runSshHandler(cmd *cobra.Command, args []string) {
 	}
 
 	// CASE 3: Unrecognized command.
-	fmt.Fprintf(os.Stderr, "Mitte: Unrecognized or not allowed command: '%s'\n", originalCmd)
-	fmt.Fprintf(os.Stderr, "This SSH key can only be used for 'git push' or 'mitte' commands.\n")
+	logger.Error(fmt.Sprintf("Mitte: Unrecognized or not allowed command: '%s'", originalCmd))
+	logger.Error("This SSH key can only be used for 'git push' or 'mitte' commands.")
 	os.Exit(1)
 }

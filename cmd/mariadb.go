@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/services"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -42,15 +43,15 @@ var mariadbListCmd = &cobra.Command{
 		files, err := os.ReadDir(serviceDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("No MariaDB services have been created yet.")
+				logger.Info("No MariaDB services have been created yet.")
 				return
 			}
-			fmt.Fprintf(os.Stderr, "Error: Could not read the services directory: %v\n", err)
+			logger.Error("Could not read the services directory", "err", err)
 			os.Exit(1)
 		}
 
 		if len(files) == 0 {
-			fmt.Println("No MariaDB services have been created yet.")
+			logger.Info("No MariaDB services have been created yet.")
 			return
 		}
 
@@ -105,12 +106,12 @@ var mariadbCreateCmd = &cobra.Command{
 		queryCacheSize, _ := cmd.Flags().GetString("query-cache-size")
 		poolingPreset, _ := cmd.Flags().GetString("pooling-preset")
 
-		fmt.Fprintf(os.Stderr, "-----> Creating MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating MariaDB instance '%s'...", instanceName))
 
 		// Check if it already exists
 		svc, _ := state.LoadService("mariadb", instanceName)
 		if svc.RootPassword != "" {
-			fmt.Fprintf(os.Stderr, "Error: A MariaDB service named '%s' already exists.\n", instanceName)
+			logger.Error(fmt.Sprintf("A MariaDB service named '%s' already exists.", instanceName))
 			os.Exit(1)
 		}
 
@@ -122,7 +123,7 @@ var mariadbCreateCmd = &cobra.Command{
 			var err error
 			dbPassword, err = GeneratePassword(32)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				logger.Error("Could not generate a secure password", "err", err)
 				os.Exit(1)
 			}
 		}
@@ -133,17 +134,17 @@ var mariadbCreateCmd = &cobra.Command{
 
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+			logger.Error("Could not connect to Docker daemon", "err", err)
 			os.Exit(1)
 		}
 		defer cli.Close()
 
 		// 1. Pull Image
 		imageName := "mariadb:" + version
-		fmt.Fprintf(os.Stderr, "-----> Pulling image %s...\n", imageName)
+		logger.Info(fmt.Sprintf("-----> Pulling image %s...", imageName))
 		out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to pull image: %v\n", err)
+			logger.Error("Failed to pull image", "err", err)
 			os.Exit(1)
 		}
 		defer out.Close()
@@ -158,23 +159,23 @@ var mariadbCreateCmd = &cobra.Command{
 			// Use custom host directory
 			absPath, err := filepath.Abs(dataDir)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to resolve data directory path: %v\n", err)
+				logger.Error("Failed to resolve data directory path", "err", err)
 				os.Exit(1)
 			}
 			bindSource = absPath
 
 			// Ensure directory exists
 			if err := os.MkdirAll(bindSource, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create data directory: %v\n", err)
+				logger.Error("Failed to create data directory", "err", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Using custom data directory: %s\n", bindSource)
+			logger.Info(fmt.Sprintf("Using custom data directory: %s", bindSource))
 		} else {
 			// Use managed volume
 			volName := "mitte-mariadb-data-" + instanceName
 			if _, err := cli.VolumeInspect(ctx, volName); err != nil {
 				if errdefs.IsNotFound(err) {
-					fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
+					logger.Info("-----> Creating persistent data volume...")
 					_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
 						Name: volName,
 						Labels: map[string]string{
@@ -184,12 +185,12 @@ var mariadbCreateCmd = &cobra.Command{
 						},
 					})
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+						logger.Error("Failed to create volume", "err", err)
 						os.Exit(1)
 					}
 					volumeName = volName
 				} else {
-					fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
+					logger.Error("Could not inspect volume", "err", err)
 					os.Exit(1)
 				}
 			} else {
@@ -240,24 +241,24 @@ var mariadbCreateCmd = &cobra.Command{
 		// Generate pooling configuration if specified
 		var poolingConfigFile string
 		if poolingPreset != "" || maxConnections > 0 || threadCacheSize > 0 || tableOpenCache > 0 || innodbBufferPoolSize != "" || queryCacheSize != "" {
-			fmt.Fprintln(os.Stderr, "-----> Generating connection pooling configuration...")
+			logger.Info("-----> Generating connection pooling configuration...")
 
 			configContent, err := services.GeneratePoolingConfig(poolingPreset, maxConnections, threadCacheSize, tableOpenCache, innodbBufferPoolSize, queryCacheSize)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+				logger.Error("Failed to generate pooling configuration", "err", err)
 				os.Exit(1)
 			}
 
 			// Create temporary config file
 			tmpFile, err := os.CreateTemp("", fmt.Sprintf("mitte-pooling-%s-*.cnf", instanceName))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create temporary config file: %v\n", err)
+				logger.Error("Failed to create temporary config file", "err", err)
 				os.Exit(1)
 			}
 			defer os.Remove(tmpFile.Name())
 
 			if _, err := tmpFile.WriteString(configContent); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to write config file: %v\n", err)
+				logger.Error("Failed to write config file", "err", err)
 				os.Exit(1)
 			}
 			tmpFile.Close()
@@ -270,7 +271,7 @@ var mariadbCreateCmd = &cobra.Command{
 		if configFile != "" {
 			// Validate config file exists
 			if _, err := os.Stat(configFile); os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "Error: Config file does not exist: %s\n", configFile)
+				logger.Error(fmt.Sprintf("Config file does not exist: %s", configFile))
 				os.Exit(1)
 			}
 
@@ -287,21 +288,21 @@ var mariadbCreateCmd = &cobra.Command{
 		resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, instanceName)
 		if err != nil {
 			if errdefs.IsConflict(err) {
-				fmt.Fprintf(os.Stderr, "Error: A container named '%s' already exists. Please choose a different name or remove the existing container.\n", instanceName)
+				logger.Error(fmt.Sprintf("A container named '%s' already exists. Please choose a different name or remove the existing container.", instanceName))
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create MariaDB container: %v\n", err)
+				logger.Error("Failed to create MariaDB container", "err", err)
 			}
 			os.Exit(1)
 		}
 
 		// 4. Start Container
 		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to start MariaDB container: %v\n", err)
+			logger.Error("Failed to start MariaDB container", "err", err)
 			os.Exit(1)
 		}
 
 		// 5. Wait for health check
-		fmt.Fprintln(os.Stderr, "-----> Waiting for MariaDB to become healthy...")
+		logger.Info("-----> Waiting for MariaDB to become healthy...")
 		for i := 0; i < 60; i++ {
 			inspect, err := cli.ContainerInspect(ctx, resp.ID)
 			if err != nil {
@@ -345,20 +346,20 @@ var mariadbCreateCmd = &cobra.Command{
 		}
 
 		if err := svc.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
+			logger.Error("Failed to save service state", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("\nSuccess! MariaDB instance '%s' created.\n", instanceName)
+		logger.Info(fmt.Sprintf("\nSuccess! MariaDB instance '%s' created.", instanceName))
 		if initialDatabase != "" {
-			fmt.Printf("Initial database '%s' has also been created.\n", initialDatabase)
+			logger.Info(fmt.Sprintf("Initial database '%s' has also been created.", initialDatabase))
 		}
 		if user != "root" {
-			fmt.Printf("The user '%s' password is: %s\n", user, dbPassword)
+			logger.Info(fmt.Sprintf("The user '%s' password is: %s", user, dbPassword))
 		} else {
-			fmt.Printf("The root password is: %s\n", dbPassword)
+			logger.Info(fmt.Sprintf("The root password is: %s", dbPassword))
 		}
-		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
+		logger.Info("NOTE: This is the only time the password will be displayed. Please save it securely.")
 	},
 }
 
@@ -373,16 +374,16 @@ var mariadbDestroyCmd = &cobra.Command{
 		ctx := context.Background()
 
 		// Safety confirmation
-		fmt.Printf(" !    WARNING: This will permanently delete the MariaDB instance '%s' and all of its data.\n", instanceName)
+		logger.Warn(fmt.Sprintf(" !    WARNING: This will permanently delete the MariaDB instance '%s' and all of its data.", instanceName))
 		fmt.Printf(" >    Please type '%s' to confirm: ", instanceName)
 		reader := bufio.NewReader(os.Stdin)
 		confirmation, _ := reader.ReadString('\n')
 		if strings.TrimSpace(confirmation) != instanceName {
-			fmt.Println("Cancelled.")
+			logger.Info("Cancelled.")
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Destroying MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Destroying MariaDB instance '%s'...", instanceName))
 
 		// Delete the service state first
 		svc, err := state.LoadService("mariadb", instanceName)
@@ -393,11 +394,11 @@ var mariadbDestroyCmd = &cobra.Command{
 		// Destroy the container and volume
 		err = services.DestroyMariaDB(ctx, instanceName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to destroy MariaDB instance: %v\n", err)
+			logger.Error("Failed to destroy MariaDB instance", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! MariaDB instance '%s' has been destroyed.\n", instanceName)
+		logger.Info(fmt.Sprintf("Success! MariaDB instance '%s' has been destroyed.", instanceName))
 	},
 }
 
@@ -420,19 +421,19 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 			envVarName = "DATABASE_URL" // Fall back to the default.
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Linking MariaDB instance '%s' to app '%s'...\n", instanceName, appName)
+		logger.Info(fmt.Sprintf("-----> Linking MariaDB instance '%s' to app '%s'...", instanceName, appName))
 
 		// 2. Load the service state to get connection details
 		service, err := state.LoadService(serviceType, instanceName)
 		if err != nil || service.RootPassword == "" {
-			fmt.Fprintf(os.Stderr, "Error: Could not find MariaDB instance '%s'.\n", instanceName)
+			logger.Error(fmt.Sprintf("Could not find MariaDB instance '%s'.", instanceName))
 			os.Exit(1)
 		}
 
 		// 3. Load the application state
 		app, err := state.Load(appName)
 		if err != nil || len(app.Domains) == 0 { // Check domains to see if app exists
-			fmt.Fprintf(os.Stderr, "Error: Could not find application '%s'.\n", appName)
+			logger.Error(fmt.Sprintf("Could not find application '%s'.", appName))
 			os.Exit(1)
 		}
 
@@ -456,21 +457,21 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 		)
 
 		// 5. Set the environment variable on the app
-		fmt.Fprintln(os.Stderr, "-----> Setting DATABASE_URL config variable...")
+		logger.Info("-----> Setting DATABASE_URL config variable...")
 		app.EnvVars[envVarName] = databaseURL
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save application state with new DATABASE_URL: %v\n", err)
+			logger.Error("Failed to save application state with new DATABASE_URL", "err", err)
 			os.Exit(1)
 		}
 
 		// 6. Redeploy the application to apply the change
-		fmt.Fprintln(os.Stderr, "-----> Redeploying application to apply changes...")
+		logger.Info("-----> Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to redeploy application '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to redeploy application '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Println("Success! Linked and redeployed. Your app can now connect to the database via the DATABASE_URL environment variable.")
+		logger.Info("Success! Linked and redeployed. Your app can now connect to the database via the DATABASE_URL environment variable.")
 	},
 }
 
@@ -484,15 +485,15 @@ and saves it to the specified output file on the host system.`,
 		instanceName := args[0]
 		outputFile := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Creating backup of MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating backup of MariaDB instance '%s'...", instanceName))
 
 		err := services.BackupMariaDB(context.Background(), instanceName, outputFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create backup: %v\n", err)
+			logger.Error("Failed to create backup", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! Backup saved to %s\n", outputFile)
+		logger.Info(fmt.Sprintf("Success! Backup saved to %s", outputFile))
 	},
 }
 
@@ -506,15 +507,15 @@ WARNING: This will overwrite existing data in the databases.`,
 		instanceName := args[0]
 		backupFile := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Restoring MariaDB instance '%s' from backup...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Restoring MariaDB instance '%s' from backup...", instanceName))
 
 		err := services.RestoreMariaDB(context.Background(), instanceName, backupFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to restore from backup: %v\n", err)
+			logger.Error("Failed to restore from backup", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Println("Success! Database restored from backup.")
+		logger.Info("Success! Database restored from backup.")
 	},
 }
 
@@ -539,14 +540,14 @@ If no privileges are specified, the user will have no privileges by default.`,
 		database, _ := cmd.Flags().GetString("database")
 		privileges, _ := cmd.Flags().GetStringSlice("privileges")
 
-		fmt.Fprintf(os.Stderr, "-----> Creating user '%s' in MariaDB instance '%s'...\n", username, instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating user '%s' in MariaDB instance '%s'...", username, instanceName))
 
 		// Generate password if not provided
 		if password == "" {
 			var err error
 			password, err = GeneratePassword(32)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				logger.Error("Could not generate a secure password", "err", err)
 				os.Exit(1)
 			}
 		}
@@ -558,17 +559,17 @@ If no privileges are specified, the user will have no privileges by default.`,
 
 		err := services.CreateMariaDBUser(context.Background(), instanceName, username, password, database, privileges)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create user: %v\n", err)
+			logger.Error("Failed to create user", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! User '%s' created in MariaDB instance '%s'.\n", username, instanceName)
-		fmt.Printf("Password: %s\n", password)
-		fmt.Printf("Database: %s\n", database)
+		logger.Info(fmt.Sprintf("Success! User '%s' created in MariaDB instance '%s'.", username, instanceName))
+		logger.Info(fmt.Sprintf("Password: %s", password))
+		logger.Info(fmt.Sprintf("Database: %s", database))
 		if len(privileges) > 0 {
-			fmt.Printf("Privileges: %s\n", strings.Join(privileges, ", "))
+			logger.Info(fmt.Sprintf("Privileges: %s", strings.Join(privileges, ", ")))
 		}
-		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
+		logger.Info("NOTE: This is the only time the password will be displayed. Please save it securely.")
 	},
 }
 
@@ -581,15 +582,15 @@ var mariadbUsersDeleteCmd = &cobra.Command{
 		instanceName := args[0]
 		username := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Deleting user '%s' from MariaDB instance '%s'...\n", username, instanceName)
+		logger.Info(fmt.Sprintf("-----> Deleting user '%s' from MariaDB instance '%s'...", username, instanceName))
 
 		err := services.DeleteMariaDBUser(context.Background(), instanceName, username)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to delete user: %v\n", err)
+			logger.Error("Failed to delete user", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! User '%s' deleted from MariaDB instance '%s'.\n", username, instanceName)
+		logger.Info(fmt.Sprintf("Success! User '%s' deleted from MariaDB instance '%s'.", username, instanceName))
 	},
 }
 
@@ -601,22 +602,22 @@ var mariadbUsersListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		instanceName := args[0]
 
-		fmt.Fprintf(os.Stderr, "-----> Listing users in MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Listing users in MariaDB instance '%s'...", instanceName))
 
 		users, err := services.ListMariaDBUsers(context.Background(), instanceName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to list users: %v\n", err)
+			logger.Error("Failed to list users", "err", err)
 			os.Exit(1)
 		}
 
 		if len(users) == 0 {
-			fmt.Println("No database users found (excluding system users).")
+			logger.Info("No database users found (excluding system users).")
 			return
 		}
 
-		fmt.Println("Database users:")
+		logger.Info("Database users:")
 		for _, user := range users {
-			fmt.Printf("  • %s\n", user)
+			logger.Info(fmt.Sprintf("  • %s", user))
 		}
 	},
 }
@@ -633,26 +634,26 @@ var mariadbUpgradeCheckCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		instanceName := args[0]
 
-		fmt.Fprintf(os.Stderr, "-----> Checking upgrade status for MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Checking upgrade status for MariaDB instance '%s'...", instanceName))
 
 		currentVersion, configuredVersion, err := services.CheckMariaDBUpgrade(context.Background(), instanceName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to check upgrade status: %v\n", err)
+			logger.Error("Failed to check upgrade status", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("MariaDB instance: %s\n", instanceName)
-		fmt.Printf("Configured version: %s\n", configuredVersion)
-		fmt.Printf("Current running version: %s\n", currentVersion)
+		logger.Info(fmt.Sprintf("MariaDB instance: %s", instanceName))
+		logger.Info(fmt.Sprintf("Configured version: %s", configuredVersion))
+		logger.Info(fmt.Sprintf("Current running version: %s", currentVersion))
 
 		if currentVersion != "" && configuredVersion != "" {
 			// Simple version comparison
 			if currentVersion != configuredVersion {
-				fmt.Println("\n⚠️  Version mismatch detected!")
-				fmt.Println("The running version differs from the configured version.")
-				fmt.Println("Run 'mitte mariadb upgrade <instance-name> --to-version=<version>' to upgrade.")
+				logger.Info("\n⚠️  Version mismatch detected!")
+				logger.Info("The running version differs from the configured version.")
+				logger.Info("Run 'mitte mariadb upgrade <instance-name> --to-version=<version>' to upgrade.")
 			} else {
-				fmt.Println("\n✅ Version matches configured version.")
+				logger.Info("\n✅ Version matches configured version.")
 			}
 		}
 	},
@@ -677,39 +678,39 @@ WARNING: This will cause temporary downtime for the database.`,
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		if targetVersion == "" {
-			fmt.Fprintf(os.Stderr, "Error: Target version is required. Use --to-version flag.\n")
+			logger.Error("Target version is required. Use --to-version flag.")
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Planning upgrade of MariaDB instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Planning upgrade of MariaDB instance '%s'...", instanceName))
 
 		if dryRun {
-			fmt.Println("DRY RUN MODE: No changes will be made.")
+			logger.Info("DRY RUN MODE: No changes will be made.")
 		}
 
 		// Safety confirmation
 		if !dryRun {
-			fmt.Printf(" !    WARNING: This will upgrade MariaDB instance '%s' to version %s.\n", instanceName, targetVersion)
-			fmt.Printf(" !    The database will be temporarily unavailable during the upgrade.\n")
+			logger.Warn(fmt.Sprintf(" !    WARNING: This will upgrade MariaDB instance '%s' to version %s.", instanceName, targetVersion))
+			logger.Warn(" !    The database will be temporarily unavailable during the upgrade.")
 			fmt.Printf(" >    Type 'yes' to confirm: ")
 			reader := bufio.NewReader(os.Stdin)
 			confirmation, _ := reader.ReadString('\n')
 			if strings.TrimSpace(strings.ToLower(confirmation)) != "yes" {
-				fmt.Println("Cancelled.")
+				logger.Info("Cancelled.")
 				os.Exit(1)
 			}
 		}
 
 		err := services.UpgradeMariaDB(context.Background(), instanceName, targetVersion, dryRun)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to upgrade MariaDB instance: %v\n", err)
+			logger.Error("Failed to upgrade MariaDB instance", "err", err)
 			os.Exit(1)
 		}
 
 		if dryRun {
-			fmt.Println("Dry run completed successfully. No changes were made.")
+			logger.Info("Dry run completed successfully. No changes were made.")
 		} else {
-			fmt.Printf("Success! MariaDB instance '%s' has been upgraded to version %s.\n", instanceName, targetVersion)
+			logger.Info(fmt.Sprintf("Success! MariaDB instance '%s' has been upgraded to version %s.", instanceName, targetVersion))
 		}
 	},
 }
@@ -766,22 +767,22 @@ func init() {
 		Run: func(cmd *cobra.Command, args []string) {
 			instanceName := args[0]
 
-			fmt.Fprintf(os.Stderr, "-----> Getting connection statistics for MariaDB instance '%s'...\n", instanceName)
+			logger.Info(fmt.Sprintf("-----> Getting connection statistics for MariaDB instance '%s'...", instanceName))
 
 			stats, err := services.AnalyzeConnections(context.Background(), instanceName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to get connection statistics: %v\n", err)
+				logger.Error("Failed to get connection statistics", "err", err)
 				os.Exit(1)
 			}
 
-			fmt.Println("Connection Statistics:")
-			fmt.Printf("  Max Connections: %d\n", stats.MaxConnections)
-			fmt.Printf("  Threads Connected: %d\n", stats.ThreadsConnected)
-			fmt.Printf("  Threads Running: %d\n", stats.ThreadsRunning)
-			fmt.Printf("  Threads Cached: %d\n", stats.ThreadsCached)
-			fmt.Printf("  Threads Created: %d\n", stats.ThreadsCreated)
-			fmt.Printf("  Connection Usage: %.1f%%\n", stats.ConnectionUsage)
-			fmt.Printf("  Connection Churn: %.2f\n", stats.ConnectionChurn)
+			logger.Info("Connection Statistics:")
+			logger.Info(fmt.Sprintf("  Max Connections: %d", stats.MaxConnections))
+			logger.Info(fmt.Sprintf("  Threads Connected: %d", stats.ThreadsConnected))
+			logger.Info(fmt.Sprintf("  Threads Running: %d", stats.ThreadsRunning))
+			logger.Info(fmt.Sprintf("  Threads Cached: %d", stats.ThreadsCached))
+			logger.Info(fmt.Sprintf("  Threads Created: %d", stats.ThreadsCreated))
+			logger.Info(fmt.Sprintf("  Connection Usage: %.1f%%", stats.ConnectionUsage))
+			logger.Info(fmt.Sprintf("  Connection Churn: %.2f", stats.ConnectionChurn))
 		},
 	}
 
@@ -792,42 +793,42 @@ func init() {
 		Run: func(cmd *cobra.Command, args []string) {
 			instanceName := args[0]
 
-			fmt.Fprintf(os.Stderr, "-----> Analyzing connections for MariaDB instance '%s'...\n", instanceName)
+			logger.Info(fmt.Sprintf("-----> Analyzing connections for MariaDB instance '%s'...", instanceName))
 
 			stats, err := services.AnalyzeConnections(context.Background(), instanceName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to analyze connections: %v\n", err)
+				logger.Error("Failed to analyze connections", "err", err)
 				os.Exit(1)
 			}
 
-			fmt.Println("Connection Statistics:")
-			fmt.Printf("  Max Connections: %d\n", stats.MaxConnections)
-			fmt.Printf("  Threads Connected: %d\n", stats.ThreadsConnected)
-			fmt.Printf("  Threads Running: %d\n", stats.ThreadsRunning)
-			fmt.Printf("  Threads Cached: %d\n", stats.ThreadsCached)
-			fmt.Printf("  Threads Created: %d\n", stats.ThreadsCreated)
-			fmt.Printf("  Connection Usage: %.1f%%\n", stats.ConnectionUsage)
-			fmt.Printf("  Connection Churn: %.2f\n", stats.ConnectionChurn)
+			logger.Info("Connection Statistics:")
+			logger.Info(fmt.Sprintf("  Max Connections: %d", stats.MaxConnections))
+			logger.Info(fmt.Sprintf("  Threads Connected: %d", stats.ThreadsConnected))
+			logger.Info(fmt.Sprintf("  Threads Running: %d", stats.ThreadsRunning))
+			logger.Info(fmt.Sprintf("  Threads Cached: %d", stats.ThreadsCached))
+			logger.Info(fmt.Sprintf("  Threads Created: %d", stats.ThreadsCreated))
+			logger.Info(fmt.Sprintf("  Connection Usage: %.1f%%", stats.ConnectionUsage))
+			logger.Info(fmt.Sprintf("  Connection Churn: %.2f", stats.ConnectionChurn))
 
-			fmt.Println("\nAnalysis:")
+			logger.Info("\nAnalysis:")
 			if stats.ConnectionUsage > 80 {
-				fmt.Println("  ⚠️  High connection usage! Consider increasing max_connections.")
+				logger.Warn("  ⚠️  High connection usage! Consider increasing max_connections.")
 			} else if stats.ConnectionUsage > 50 {
-				fmt.Println("  ⚠️  Moderate connection usage. Monitor for growth.")
+				logger.Warn("  ⚠️  Moderate connection usage. Monitor for growth.")
 			} else {
-				fmt.Println("  ✅ Connection usage is healthy.")
+				logger.Info("  ✅ Connection usage is healthy.")
 			}
 
 			if stats.ConnectionChurn > 10 {
-				fmt.Println("  ⚠️  High connection churn! Consider increasing thread_cache_size.")
+				logger.Warn("  ⚠️  High connection churn! Consider increasing thread_cache_size.")
 			} else if stats.ConnectionChurn > 5 {
-				fmt.Println("  ⚠️  Moderate connection churn. Monitor thread creation.")
+				logger.Warn("  ⚠️  Moderate connection churn. Monitor thread creation.")
 			} else {
-				fmt.Println("  ✅ Connection caching is effective.")
+				logger.Info("  ✅ Connection caching is effective.")
 			}
 
 			if stats.ThreadsRunning > stats.ThreadsConnected/2 {
-				fmt.Println("  ⚠️  High number of running threads. Check for long-running queries.")
+				logger.Warn("  ⚠️  High number of running threads. Check for long-running queries.")
 			}
 		},
 	}
@@ -842,12 +843,12 @@ pooling configuration based on the workload patterns.`,
 			instanceName := args[0]
 			preset, _ := cmd.Flags().GetString("preset")
 
-			fmt.Fprintf(os.Stderr, "-----> Optimizing connection pooling for MariaDB instance '%s'...\n", instanceName)
+			logger.Info(fmt.Sprintf("-----> Optimizing connection pooling for MariaDB instance '%s'...", instanceName))
 
 			// Load current service to get existing configuration
 			svc, err := state.LoadService("mariadb", instanceName)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to load service state: %v\n", err)
+				logger.Error("Failed to load service state", "err", err)
 				os.Exit(1)
 			}
 
@@ -856,7 +857,7 @@ pooling configuration based on the workload patterns.`,
 				// Analyze current usage to suggest preset
 				stats, err := services.AnalyzeConnections(context.Background(), instanceName)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Failed to analyze connections: %v\n", err)
+					logger.Error("Failed to analyze connections", "err", err)
 					os.Exit(1)
 				}
 
@@ -871,7 +872,7 @@ pooling configuration based on the workload patterns.`,
 					preset = "small"
 				}
 
-				fmt.Printf("Based on current usage (%d connections), suggesting '%s' preset.\n", stats.ThreadsConnected, preset)
+				logger.Info(fmt.Sprintf("Based on current usage (%d connections), suggesting '%s' preset.", stats.ThreadsConnected, preset))
 			}
 
 			// Generate configuration using existing values or preset defaults with resource detection
@@ -885,16 +886,16 @@ pooling configuration based on the workload patterns.`,
 				instanceName,
 			)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+				logger.Error("Failed to generate pooling configuration", "err", err)
 				os.Exit(1)
 			}
 
-			fmt.Println("Recommended Pooling Configuration:")
-			fmt.Println(config)
-			fmt.Println("To apply this configuration:")
-			fmt.Printf("  1. Save the above configuration to a file (e.g., pooling.cnf)\n")
-			fmt.Printf("  2. Run: mitte mariadb create %s --config-file=pooling.cnf\n", instanceName)
-			fmt.Println("     (Note: This will recreate the instance. For existing instances, manually update the config file.)")
+			logger.Info("Recommended Pooling Configuration:")
+			logger.Info(config)
+			logger.Info("To apply this configuration:")
+			logger.Info("  1. Save the above configuration to a file (e.g., pooling.cnf)")
+			logger.Info(fmt.Sprintf("  2. Run: mitte mariadb create %s --config-file=pooling.cnf", instanceName))
+			logger.Info("     (Note: This will recreate the instance. For existing instances, manually update the config file.)")
 		},
 	}
 
@@ -919,7 +920,7 @@ to automatically restart the container after applying configuration.`,
 			poolingPreset, _ := cmd.Flags().GetString("pooling-preset")
 			restart, _ := cmd.Flags().GetBool("restart")
 
-			fmt.Fprintf(os.Stderr, "-----> Applying connection pooling configuration to MariaDB instance '%s'...\n", instanceName)
+			logger.Info(fmt.Sprintf("-----> Applying connection pooling configuration to MariaDB instance '%s'...", instanceName))
 
 			var configContent string
 			var err error
@@ -928,7 +929,7 @@ to automatically restart the container after applying configuration.`,
 				// Read configuration from file
 				content, err := os.ReadFile(configFile)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Failed to read config file: %v\n", err)
+					logger.Error("Failed to read config file", "err", err)
 					os.Exit(1)
 				}
 				configContent = string(content)
@@ -944,23 +945,23 @@ to automatically restart the container after applying configuration.`,
 					instanceName,
 				)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: Failed to generate pooling configuration: %v\n", err)
+					logger.Error("Failed to generate pooling configuration", "err", err)
 					os.Exit(1)
 				}
 			}
 
 			// Apply the configuration
 			if err := services.ApplyPoolingConfig(context.Background(), instanceName, configContent, restart); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to apply pooling configuration: %v\n", err)
+				logger.Error("Failed to apply pooling configuration", "err", err)
 				os.Exit(1)
 			}
 
-			fmt.Println("Success! Connection pooling configuration has been applied.")
+			logger.Info("Success! Connection pooling configuration has been applied.")
 			if restart {
-				fmt.Println("Container was restarted to apply changes.")
+				logger.Info("Container was restarted to apply changes.")
 			} else {
-				fmt.Println("Configuration was reloaded without restart.")
-				fmt.Println("Note: Some parameters may require a restart to take full effect.")
+				logger.Info("Configuration was reloaded without restart.")
+				logger.Info("Note: Some parameters may require a restart to take full effect.")
 			}
 		},
 	}

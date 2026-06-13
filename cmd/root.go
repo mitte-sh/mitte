@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 // Version is the current version of Mitte, set at build time.
@@ -16,7 +19,7 @@ func runCommand(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	fmt.Printf("▶️ Running: %s %v\n", name, args)
+	logger.Info(fmt.Sprintf("Running: %s %v", name, args))
 	return cmd.Run()
 }
 
@@ -34,6 +37,14 @@ deploying applications with a simple 'git push'.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		debug, _ := cmd.Flags().GetBool("debug")
+		if verbose || debug {
+			logger.SetLevel(log.DebugLevel)
+		}
+		return nil
+	},
 }
 
 var checkDepsCmd = &cobra.Command{
@@ -47,14 +58,13 @@ It's useful for troubleshooting deployment issues.`,
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Whoops. There was an error while executing your command: '%s'", err)
+		logger.Error("Whoops. There was an error while executing your command", "err", err)
 		os.Exit(1)
 	}
 }
 
 func runCheckDeps(cmd *cobra.Command, args []string) {
-	fmt.Println("🔍 Checking Mitte dependencies...")
-	fmt.Println()
+	logger.Info("Checking Mitte dependencies...")
 
 	deps := []struct {
 		name string
@@ -70,25 +80,26 @@ func runCheckDeps(cmd *cobra.Command, args []string) {
 	allOk := true
 	for _, dep := range deps {
 		if _, err := exec.LookPath(dep.path); err != nil {
-			fmt.Printf("❌ %s: NOT FOUND\n", dep.name)
-			fmt.Printf("   %s\n", dep.desc)
-			fmt.Printf("   To install: sudo mitte setup\n")
+			logger.Info(fmt.Sprintf("%s: NOT FOUND", dep.name))
+			logger.Info(fmt.Sprintf("   %s", dep.desc))
+			logger.Info("   To install: sudo mitte setup")
 			allOk = false
 		} else {
-			fmt.Printf("✅ %s: OK\n", dep.name)
+			logger.Info(fmt.Sprintf("%s: OK", dep.name))
 		}
 	}
 
-	fmt.Println()
 	if allOk {
-		fmt.Println("🎉 All dependencies are installed and ready!")
+		logger.Info("All dependencies are installed and ready!")
 	} else {
-		fmt.Println("⚠️  Some dependencies are missing.")
-		fmt.Println("   Run 'sudo mitte setup' to install missing dependencies.")
+		logger.Warn("Some dependencies are missing.")
+		logger.Info("Run 'sudo mitte setup' to install missing dependencies.")
 		os.Exit(1)
 	}
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose (debug) logging")
+	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging (alias for --verbose)")
 	rootCmd.AddCommand(checkDepsCmd)
 }

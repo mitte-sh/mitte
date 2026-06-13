@@ -12,6 +12,7 @@ import (
 
 	"github.com/mitte-sh/mitte/pkg/auth"
 	"github.com/mitte-sh/mitte/pkg/config"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/router"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -101,32 +102,32 @@ func runAuthSetup(cmd *cobra.Command, args []string) {
 	force, _ := cmd.Flags().GetBool("force")
 
 	if auth.IsSetup() && !force {
-		fmt.Fprintf(os.Stderr, "Auth is already configured. Run 'mitte auth info' to see status.\n")
-		fmt.Fprintf(os.Stderr, "Use --force to re-run setup.\n")
+		logger.Info("Auth is already configured. Run 'mitte auth info' to see status.")
+		logger.Info("Use --force to re-run setup.")
 		return
 	}
 
 	// If forcing, stop and remove existing container so it gets recreated with new config
 	if force {
-		fmt.Fprintln(os.Stderr, "-----> Force mode: removing existing Authelia container and data...")
+		logger.Info("-----> Force mode: removing existing Authelia container and data...")
 		if err := auth.StopContainer(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			logger.Warn("", "err", err)
 		}
 		// Remove the SQLite database so Authelia creates a fresh one with the new encryption key
 		dbPath := auth.AuthDir + "/db.sqlite3"
 		if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: could not remove database: %v\n", err)
+			logger.Warn("could not remove database", "err", err)
 		} else {
-			fmt.Fprintln(os.Stderr, "-----> Removed old auth database.")
+			logger.Info("-----> Removed old auth database.")
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "-----> Setting up Authelia authentication service...")
+	logger.Info("-----> Setting up Authelia authentication service...")
 
 	// Get base domain
 	baseDomain, err := config.GetBaseDomain()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error("", "err", err)
 		os.Exit(1)
 	}
 
@@ -134,10 +135,10 @@ func runAuthSetup(cmd *cobra.Command, args []string) {
 	var cfg auth.Config
 	if force && auth.IsSetup() {
 		// Reuse existing secrets so the users database remains valid
-		fmt.Fprintln(os.Stderr, "-----> Reusing existing secrets...")
+		logger.Info("-----> Reusing existing secrets...")
 		existingCfg, err := auth.LoadConfig()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not load existing config, generating new secrets: %v\n", err)
+			logger.Warn("could not load existing config, generating new secrets", "err", err)
 			existingCfg = nil
 		}
 		if existingCfg != nil && existingCfg.JWTSecret != "" {
@@ -147,20 +148,20 @@ func runAuthSetup(cmd *cobra.Command, args []string) {
 
 	// Generate new secrets if we don't have them
 	if cfg.JWTSecret == "" {
-		fmt.Fprintln(os.Stderr, "-----> Generating secrets...")
+		logger.Info("-----> Generating secrets...")
 		cfg.JWTSecret, err = auth.GenerateSecret(64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating JWT secret: %v\n", err)
+			logger.Error(fmt.Sprintf("Error generating JWT secret: %v", err))
 			os.Exit(1)
 		}
 		cfg.SessionSecret, err = auth.GenerateSecret(64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating session secret: %v\n", err)
+			logger.Error(fmt.Sprintf("Error generating session secret: %v", err))
 			os.Exit(1)
 		}
 		cfg.EncryptionKey, err = auth.GenerateSecret(64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating encryption key: %v\n", err)
+			logger.Error(fmt.Sprintf("Error generating encryption key: %v", err))
 			os.Exit(1)
 		}
 	}
@@ -171,34 +172,34 @@ func runAuthSetup(cmd *cobra.Command, args []string) {
 	cfg.CookieDomain = auth.CookieDomain(baseDomain)
 
 	if err := auth.GenerateConfig(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating config: %v\n", err)
+		logger.Error(fmt.Sprintf("Error generating config: %v", err))
 		os.Exit(1)
 	}
 
 	// Generate empty users file
-	fmt.Fprintln(os.Stderr, "-----> Creating users database...")
+	logger.Info("-----> Creating users database...")
 	if err := auth.GenerateUsersFile(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating users file: %v\n", err)
+		logger.Error(fmt.Sprintf("Error creating users file: %v", err))
 		os.Exit(1)
 	}
 
 	// Start Authelia container
-	fmt.Fprintln(os.Stderr, "-----> Starting Authelia container...")
+	logger.Info("-----> Starting Authelia container...")
 	if err := auth.EnsureContainer(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting Authelia: %v\n", err)
+		logger.Error(fmt.Sprintf("Error starting Authelia: %v", err))
 		os.Exit(1)
 	}
 
 	// Create auth portal route
-	fmt.Fprintln(os.Stderr, "-----> Creating auth portal route...")
+	logger.Info("-----> Creating auth portal route...")
 	if err := router.CreateAuthPortalRoute(baseDomain); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not create auth portal route: %v\n", err)
-		fmt.Fprintf(os.Stderr, "You may need to manually create a DNS record for auth.%s\n", baseDomain)
+		logger.Warn("Could not create auth portal route", "err", err)
+		logger.Info(fmt.Sprintf("You may need to manually create a DNS record for auth.%s", baseDomain))
 	}
 
 	// Prompt for first user
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "-----> Create your first admin user:")
+	logger.Info("")
+	logger.Info("-----> Create your first admin user:")
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Fprintf(os.Stderr, "Username: ")
@@ -221,19 +222,19 @@ func runAuthSetup(cmd *cobra.Command, args []string) {
 			Email:       email,
 			Groups:      []string{"admins", "users"},
 		}, password); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not create user: %v\n", err)
-			fmt.Fprintf(os.Stderr, "You can create users later with: mitte auth add-user <username>\n")
+			logger.Warn("Could not create user", "err", err)
+			logger.Info("You can create users later with: mitte auth add-user <username>")
 		} else {
-			fmt.Fprintf(os.Stderr, "-----> User '%s' created successfully.\n", username)
+			logger.Info(fmt.Sprintf("-----> User '%s' created successfully.", username))
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "-----> Skipped user creation. Use 'mitte auth add-user <username>' to create users.\n")
+		logger.Info("-----> Skipped user creation. Use 'mitte auth add-user <username>' to create users.")
 	}
 
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintf(os.Stderr, "-----> Auth setup complete!\n")
-	fmt.Fprintf(os.Stderr, "       Login portal: %s\n", auth.LoginPortalURL(baseDomain))
-	fmt.Fprintf(os.Stderr, "       To protect an app: mitte auth enable <app-name>\n")
+	logger.Info("")
+	logger.Info("-----> Auth setup complete!")
+	logger.Info(fmt.Sprintf("       Login portal: %s", auth.LoginPortalURL(baseDomain)))
+	logger.Info("       To protect an app: mitte auth enable <app-name>")
 }
 
 func runAuthEnable(cmd *cobra.Command, args []string) {
@@ -242,29 +243,29 @@ func runAuthEnable(cmd *cobra.Command, args []string) {
 
 	// Check if auth is set up
 	if !auth.IsSetup() {
-		fmt.Fprintf(os.Stderr, "Error: Auth not configured. Run 'mitte auth setup' first.\n")
+		logger.Error("Auth not configured. Run 'mitte auth setup' first.")
 		os.Exit(1)
 	}
 
 	// Check if authelia is running
 	running, err := auth.IsRunning(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking Authelia status: %v\n", err)
+		logger.Error(fmt.Sprintf("Error checking Authelia status: %v", err))
 		os.Exit(1)
 	}
 	if !running {
-		fmt.Fprintf(os.Stderr, "Error: Authelia container is not running. Run 'mitte auth setup' to start it.\n")
+		logger.Error("Authelia container is not running. Run 'mitte auth setup' to start it.")
 		os.Exit(1)
 	}
 
 	// Load app state
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist.\n", appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
 
@@ -281,26 +282,26 @@ func runAuthEnable(cmd *cobra.Command, args []string) {
 		Policy:  policy,
 	}
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving app state: %v\n", err)
+		logger.Error(fmt.Sprintf("Error saving app state: %v", err))
 		os.Exit(1)
 	}
 
 	// Update routes with auth
 	if app.HostPort != "" {
 		if err := router.SetAppRoutesWithAuth(appName, app.Domains, app.HostPort, true, policy); err != nil {
-			fmt.Fprintf(os.Stderr, "Error updating routes: %v\n", err)
+			logger.Error(fmt.Sprintf("Error updating routes: %v", err))
 			os.Exit(1)
 		}
 	}
 
 	// Regenerate Authelia ACL rules
 	if err := updateAutheliaACL(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not update Authelia ACL rules: %v\n", err)
-		fmt.Fprintf(os.Stderr, "You may need to restart Authelia manually: docker restart mitte-authelia\n")
+		logger.Warn("Could not update Authelia ACL rules", "err", err)
+		logger.Error("You may need to restart Authelia manually: docker restart mitte-authelia")
 	}
 
-	fmt.Printf("Auth enabled for app '%s' with policy '%s'.\n", appName, policy)
-	fmt.Printf("Users will be redirected to %s to authenticate.\n", auth.LoginPortalURL(getBaseDomain()))
+	logger.Info(fmt.Sprintf("Auth enabled for app '%s' with policy '%s'.", appName, policy))
+	logger.Info(fmt.Sprintf("Users will be redirected to %s to authenticate.", auth.LoginPortalURL(getBaseDomain())))
 }
 
 func runAuthDisable(cmd *cobra.Command, args []string) {
@@ -310,25 +311,25 @@ func runAuthDisable(cmd *cobra.Command, args []string) {
 	// Load app state
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist.\n", appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
 
 	// Disable auth
 	app.Auth = nil
 	if err := app.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving app state: %v\n", err)
+		logger.Error(fmt.Sprintf("Error saving app state: %v", err))
 		os.Exit(1)
 	}
 
 	// Update routes without auth
 	if app.HostPort != "" {
 		if err := router.SetAppRoutes(appName, app.Domains, app.HostPort); err != nil {
-			fmt.Fprintf(os.Stderr, "Error updating routes: %v\n", err)
+			logger.Error(fmt.Sprintf("Error updating routes: %v", err))
 			os.Exit(1)
 		}
 	}
@@ -336,11 +337,11 @@ func runAuthDisable(cmd *cobra.Command, args []string) {
 	// Regenerate Authelia ACL rules
 	if auth.IsSetup() {
 		if err := updateAutheliaACL(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not update Authelia ACL rules: %v\n", err)
+			logger.Warn("Could not update Authelia ACL rules", "err", err)
 		}
 	}
 
-	fmt.Printf("Auth disabled for app '%s'.\n", appName)
+	logger.Info(fmt.Sprintf("Auth disabled for app '%s'.", appName))
 }
 
 func runAuthStatus(cmd *cobra.Command, args []string) {
@@ -348,19 +349,19 @@ func runAuthStatus(cmd *cobra.Command, args []string) {
 
 	app, err := state.Load(appName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading app '%s': %v\n", appName, err)
+		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
 	if len(app.Domains) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: App '%s' does not exist.\n", appName)
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
 
 	if app.Auth == nil || !app.Auth.Enabled {
-		fmt.Printf("Auth: disabled\n")
+		logger.Info("Auth: disabled")
 	} else {
-		fmt.Printf("Auth: enabled\n")
-		fmt.Printf("Policy: %s\n", app.Auth.Policy)
+		logger.Info("Auth: enabled")
+		logger.Info(fmt.Sprintf("Policy: %s", app.Auth.Policy))
 	}
 }
 
@@ -368,23 +369,23 @@ func runAuthInfo(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
 	if !auth.IsSetup() {
-		fmt.Println("Auth: not configured")
-		fmt.Println("Run 'mitte auth setup' to get started.")
+		logger.Info("Auth: not configured")
+		logger.Info("Run 'mitte auth setup' to get started.")
 		return
 	}
 
 	status := auth.Status(ctx)
-	fmt.Printf("Authelia status: %s\n", status)
+	logger.Info(fmt.Sprintf("Authelia status: %s", status))
 
 	baseDomain, err := config.GetBaseDomain()
 	if err == nil {
-		fmt.Printf("Login portal: %s\n", auth.LoginPortalURL(baseDomain))
+		logger.Info(fmt.Sprintf("Login portal: %s", auth.LoginPortalURL(baseDomain)))
 	}
 
 	// List users
 	users, err := auth.ListUsers()
 	if err == nil && len(users) > 0 {
-		fmt.Printf("\nUsers:\n")
+		logger.Info("\nUsers:")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "USERNAME\tEMAIL\tGROUPS")
 		for _, u := range users {
@@ -392,7 +393,7 @@ func runAuthInfo(cmd *cobra.Command, args []string) {
 		}
 		w.Flush()
 	} else {
-		fmt.Printf("\nNo users configured. Use 'mitte auth add-user <username>' to add users.\n")
+		logger.Info("\nNo users configured. Use 'mitte auth add-user <username>' to add users.")
 	}
 }
 
@@ -400,7 +401,7 @@ func runAuthAddUser(cmd *cobra.Command, args []string) {
 	username := args[0]
 
 	if !auth.IsSetup() {
-		fmt.Fprintf(os.Stderr, "Error: Auth not configured. Run 'mitte auth setup' first.\n")
+		logger.Error("Auth not configured. Run 'mitte auth setup' first.")
 		os.Exit(1)
 	}
 
@@ -422,7 +423,7 @@ func runAuthAddUser(cmd *cobra.Command, args []string) {
 	password = strings.TrimSpace(password)
 
 	if password == "" {
-		fmt.Fprintf(os.Stderr, "Error: Password cannot be empty.\n")
+		logger.Error("Password cannot be empty.")
 		os.Exit(1)
 	}
 
@@ -432,44 +433,44 @@ func runAuthAddUser(cmd *cobra.Command, args []string) {
 		Email:       email,
 		Groups:      []string{"users"},
 	}, password); err != nil {
-		fmt.Fprintf(os.Stderr, "Error adding user: %v\n", err)
+		logger.Error(fmt.Sprintf("Error adding user: %v", err))
 		os.Exit(1)
 	}
 
-	fmt.Printf("User '%s' created successfully.\n", username)
+	logger.Info(fmt.Sprintf("User '%s' created successfully.", username))
 }
 
 func runAuthRemoveUser(cmd *cobra.Command, args []string) {
 	username := args[0]
 
 	if !auth.IsSetup() {
-		fmt.Fprintf(os.Stderr, "Error: Auth not configured. Run 'mitte auth setup' first.\n")
+		logger.Error("Auth not configured. Run 'mitte auth setup' first.")
 		os.Exit(1)
 	}
 
 	if err := auth.RemoveUser(username); err != nil {
-		fmt.Fprintf(os.Stderr, "Error removing user: %v\n", err)
+		logger.Error(fmt.Sprintf("Error removing user: %v", err))
 		os.Exit(1)
 	}
 
-	fmt.Printf("User '%s' removed successfully.\n", username)
+	logger.Info(fmt.Sprintf("User '%s' removed successfully.", username))
 }
 
 func runAuthListUsers(cmd *cobra.Command, args []string) {
 	if !auth.IsSetup() {
-		fmt.Fprintf(os.Stderr, "Error: Auth not configured. Run 'mitte auth setup' first.\n")
+		logger.Error("Auth not configured. Run 'mitte auth setup' first.")
 		os.Exit(1)
 	}
 
 	users, err := auth.ListUsers()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing users: %v\n", err)
+		logger.Error(fmt.Sprintf("Error listing users: %v", err))
 		os.Exit(1)
 	}
 
 	if len(users) == 0 {
-		fmt.Println("No users configured.")
-		fmt.Println("Use 'mitte auth add-user <username>' to add users.")
+		logger.Info("No users configured.")
+		logger.Info("Use 'mitte auth add-user <username>' to add users.")
 		return
 	}
 
@@ -506,7 +507,7 @@ func updateAutheliaACL(ctx context.Context) error {
 	}
 
 	// Regenerate config with ACL rules
-	fmt.Fprintf(os.Stderr, "-----> Updating Authelia ACL rules (%d domain rules)...\n", len(rules))
+	logger.Info(fmt.Sprintf("-----> Updating Authelia ACL rules (%d domain rules)...", len(rules)))
 	if err := auth.GenerateConfigWithACL(*cfg, rules); err != nil {
 		return fmt.Errorf("failed to regenerate Authelia config: %w", err)
 	}

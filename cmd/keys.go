@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mitte-sh/mitte/pkg/logger"
 )
 
 const mitteBinaryPath = "/usr/bin/mitte"
@@ -43,28 +45,28 @@ func runKeysAdd(cmd *cobra.Command, args []string) {
 
 	// --- 1. Pre-flight Checks ---
 	if os.Geteuid() != 0 {
-		fmt.Fprintln(os.Stderr, "Error: this command must be run as root.")
+		logger.Error("Error: this command must be run as root.")
 		os.Exit(1)
 	}
 
 	// --- 2. Read public key from standard input ---
 	stat, _ := os.Stdin.Stat()
 	if (stat.Mode() & os.ModeCharDevice) != 0 {
-		fmt.Fprintln(os.Stderr, "Error: Public key data must be piped to this command via stdin.")
+		logger.Error("Error: Public key data must be piped to this command via stdin.")
 		os.Exit(1)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
 	publicKeyBytes, err := io.ReadAll(reader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to read public key from stdin: %v\n", err)
+		logger.Error("Failed to read public key from stdin", "err", err)
 		os.Exit(1)
 	}
 	publicKey := strings.TrimSpace(string(publicKeyBytes))
 
 	// --- 3. Validate the key (basic check) ---
 	if !strings.HasPrefix(publicKey, "ssh-rsa") && !strings.HasPrefix(publicKey, "ssh-ed25519") && !strings.HasPrefix(publicKey, "ecdsa-sha2-nistp") {
-		fmt.Fprintf(os.Stderr, "Error: Invalid or unsupported public key format provided.\nReceived: %s\n", publicKey)
+		logger.Error(fmt.Sprintf("Error: Invalid or unsupported public key format provided.\nReceived: %s", publicKey))
 		os.Exit(1)
 	}
 
@@ -89,23 +91,23 @@ func runKeysAdd(cmd *cobra.Command, args []string) {
 
 	keysFile := filepath.Join(homeDir, ".ssh", "authorized_keys")
 
-	fmt.Printf("Appending key to %s...\n", keysFile)
+	logger.Info(fmt.Sprintf("Appending key to %s...", keysFile))
 
 	f, err := os.OpenFile(keysFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to open authorized_keys file at %s: %v\n", keysFile, err)
-		fmt.Fprintln(os.Stderr, "Please ensure 'mitte setup' has been run successfully.")
+		logger.Error(fmt.Sprintf("Failed to open authorized_keys file at %s", keysFile), "err", err)
+		logger.Error("Please ensure 'mitte setup' has been run successfully.")
 		os.Exit(1)
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString(finalLine); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to write to authorized_keys file: %v\n", err)
+		logger.Error("Failed to write to authorized_keys file", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Success! Key '%s' added for user '%s'.\n", keyName, mitteSystemUser)
-	fmt.Println("You can now add a git remote and push to this server.")
+	logger.Info(fmt.Sprintf("✅ Success! Key '%s' added for user '%s'.", keyName, mitteSystemUser))
+	logger.Info("You can now add a git remote and push to this server.")
 }
 
 func init() {

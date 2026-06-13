@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/services"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
@@ -42,15 +43,15 @@ var postgresListCmd = &cobra.Command{
 		files, err := os.ReadDir(serviceDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("No PostgreSQL services have been created yet.")
+				logger.Info("No PostgreSQL services have been created yet.")
 				return
 			}
-			fmt.Fprintf(os.Stderr, "Error: Could not read the services directory: %v\n", err)
+			logger.Error("Could not read the services directory", "err", err)
 			os.Exit(1)
 		}
 
 		if len(files) == 0 {
-			fmt.Println("No PostgreSQL services have been created yet.")
+			logger.Info("No PostgreSQL services have been created yet.")
 			return
 		}
 
@@ -90,12 +91,12 @@ var postgresCreateCmd = &cobra.Command{
 		userPassword, _ := cmd.Flags().GetString("password")
 		dataDir, _ := cmd.Flags().GetString("data-dir")
 
-		fmt.Fprintf(os.Stderr, "-----> Creating PostgreSQL instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating PostgreSQL instance '%s'...", instanceName))
 
 		// Check if it already exists
 		svc, _ := state.LoadService("postgres", instanceName)
 		if svc.RootPassword != "" {
-			fmt.Fprintf(os.Stderr, "Error: A PostgreSQL service named '%s' already exists.\n", instanceName)
+			logger.Error(fmt.Sprintf("A PostgreSQL service named '%s' already exists.", instanceName))
 			os.Exit(1)
 		}
 
@@ -107,7 +108,7 @@ var postgresCreateCmd = &cobra.Command{
 			var err error
 			dbPassword, err = GeneratePassword(32)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				logger.Error("Could not generate a secure password", "err", err)
 				os.Exit(1)
 			}
 		}
@@ -118,17 +119,17 @@ var postgresCreateCmd = &cobra.Command{
 
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Could not connect to Docker daemon: %v\n", err)
+			logger.Error("Could not connect to Docker daemon", "err", err)
 			os.Exit(1)
 		}
 		defer cli.Close()
 
 		// 1. Pull Image
 		imageName := "postgres:" + version
-		fmt.Fprintf(os.Stderr, "-----> Pulling image %s...\n", imageName)
+		logger.Info(fmt.Sprintf("-----> Pulling image %s...", imageName))
 		out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to pull image: %v\n", err)
+			logger.Error("Failed to pull image", "err", err)
 			os.Exit(1)
 		}
 		defer out.Close()
@@ -143,23 +144,23 @@ var postgresCreateCmd = &cobra.Command{
 			// Use custom host directory
 			absPath, err := filepath.Abs(dataDir)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to resolve data directory path: %v\n", err)
+				logger.Error("Failed to resolve data directory path", "err", err)
 				os.Exit(1)
 			}
 			bindSource = absPath
 
 			// Ensure directory exists
 			if err := os.MkdirAll(bindSource, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create data directory: %v\n", err)
+				logger.Error("Failed to create data directory", "err", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Using custom data directory: %s\n", bindSource)
+			logger.Info(fmt.Sprintf("Using custom data directory: %s", bindSource))
 		} else {
 			// Use managed volume
 			volName := "mitte-postgres-data-" + instanceName
 			if _, err := cli.VolumeInspect(ctx, volName); err != nil {
 				if errdefs.IsNotFound(err) {
-					fmt.Fprintln(os.Stderr, "-----> Creating persistent data volume...")
+					logger.Info("-----> Creating persistent data volume...")
 					_, err := cli.VolumeCreate(ctx, volume.CreateOptions{
 						Name: volName,
 						Labels: map[string]string{
@@ -169,12 +170,12 @@ var postgresCreateCmd = &cobra.Command{
 						},
 					})
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: Failed to create volume: %v\n", err)
+						logger.Error("Failed to create volume", "err", err)
 						os.Exit(1)
 					}
 					volumeName = volName
 				} else {
-					fmt.Fprintf(os.Stderr, "Error: Could not inspect volume: %v\n", err)
+					logger.Error("Could not inspect volume", "err", err)
 					os.Exit(1)
 				}
 			} else {
@@ -235,21 +236,21 @@ var postgresCreateCmd = &cobra.Command{
 		resp, err := cli.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, instanceName)
 		if err != nil {
 			if errdefs.IsConflict(err) {
-				fmt.Fprintf(os.Stderr, "Error: A container named '%s' already exists.\n", instanceName)
+				logger.Error(fmt.Sprintf("A container named '%s' already exists.", instanceName))
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: Failed to create PostgreSQL container: %v\n", err)
+				logger.Error("Failed to create PostgreSQL container", "err", err)
 			}
 			os.Exit(1)
 		}
 
 		// 4. Start Container
 		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to start PostgreSQL container: %v\n", err)
+			logger.Error("Failed to start PostgreSQL container", "err", err)
 			os.Exit(1)
 		}
 
 		// 5. Wait for health check
-		fmt.Fprintln(os.Stderr, "-----> Waiting for PostgreSQL to become healthy...")
+		logger.Info("-----> Waiting for PostgreSQL to become healthy...")
 		for i := 0; i < 60; i++ {
 			inspect, err := cli.ContainerInspect(ctx, resp.ID)
 			if err != nil {
@@ -275,15 +276,15 @@ var postgresCreateCmd = &cobra.Command{
 		svc.DataDir = bindSource
 
 		if err := svc.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save service state: %v\n", err)
+			logger.Error("Failed to save service state", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("\nSuccess! PostgreSQL instance '%s' created.\n", instanceName)
-		fmt.Printf("User: %s\n", user)
-		fmt.Printf("Password: %s\n", dbPassword)
-		fmt.Printf("Database: %s\n", svc.DatabaseName)
-		fmt.Println("NOTE: This is the only time the password will be displayed. Please save it securely.")
+		logger.Info(fmt.Sprintf("\nSuccess! PostgreSQL instance '%s' created.", instanceName))
+		logger.Info(fmt.Sprintf("User: %s", user))
+		logger.Info(fmt.Sprintf("Password: %s", dbPassword))
+		logger.Info(fmt.Sprintf("Database: %s", svc.DatabaseName))
+		logger.Info("NOTE: This is the only time the password will be displayed. Please save it securely.")
 	},
 }
 
@@ -298,16 +299,16 @@ var postgresDestroyCmd = &cobra.Command{
 		ctx := context.Background()
 
 		// Safety confirmation
-		fmt.Printf(" !    WARNING: This will permanently delete the PostgreSQL instance '%s' and all of its data.\n", instanceName)
+		logger.Warn(fmt.Sprintf(" !    WARNING: This will permanently delete the PostgreSQL instance '%s' and all of its data.", instanceName))
 		fmt.Printf(" >    Please type '%s' to confirm: ", instanceName)
 		reader := bufio.NewReader(os.Stdin)
 		confirmation, _ := reader.ReadString('\n')
 		if strings.TrimSpace(confirmation) != instanceName {
-			fmt.Println("Cancelled.")
+			logger.Info("Cancelled.")
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Destroying PostgreSQL instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Destroying PostgreSQL instance '%s'...", instanceName))
 
 		// Delete the service state first
 		svc, err := state.LoadService("postgres", instanceName)
@@ -318,11 +319,11 @@ var postgresDestroyCmd = &cobra.Command{
 		// Destroy the container and volume
 		err = services.DestroyPostgres(ctx, instanceName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to destroy PostgreSQL instance: %v\n", err)
+			logger.Error("Failed to destroy PostgreSQL instance", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! PostgreSQL instance '%s' has been destroyed.\n", instanceName)
+		logger.Info(fmt.Sprintf("Success! PostgreSQL instance '%s' has been destroyed.", instanceName))
 	},
 }
 
@@ -344,17 +345,17 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 			envVarName = "DATABASE_URL"
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Linking PostgreSQL instance '%s' to app '%s'...\n", instanceName, appName)
+		logger.Info(fmt.Sprintf("-----> Linking PostgreSQL instance '%s' to app '%s'...", instanceName, appName))
 
 		service, err := state.LoadService(serviceType, instanceName)
 		if err != nil || service.RootPassword == "" {
-			fmt.Fprintf(os.Stderr, "Error: Could not find PostgreSQL instance '%s'.\n", instanceName)
+			logger.Error(fmt.Sprintf("Could not find PostgreSQL instance '%s'.", instanceName))
 			os.Exit(1)
 		}
 
 		app, err := state.Load(appName)
 		if err != nil || len(app.Domains) == 0 {
-			fmt.Fprintf(os.Stderr, "Error: Could not find application '%s'.\n", appName)
+			logger.Error(fmt.Sprintf("Could not find application '%s'.", appName))
 			os.Exit(1)
 		}
 
@@ -367,20 +368,20 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 			service.DatabaseName,
 		)
 
-		fmt.Fprintf(os.Stderr, "-----> Setting %s config variable...\n", envVarName)
+		logger.Info(fmt.Sprintf("-----> Setting %s config variable...", envVarName))
 		app.EnvVars[envVarName] = databaseURL
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to save application state: %v\n", err)
+			logger.Error("Failed to save application state", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Fprintln(os.Stderr, "-----> Redeploying application to apply changes...")
+		logger.Info("-----> Redeploying application to apply changes...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to redeploy application '%s': %v\n", appName, err)
+			logger.Error(fmt.Sprintf("Failed to redeploy application '%s'", appName), "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Println("Success! Linked and redeployed.")
+		logger.Info("Success! Linked and redeployed.")
 	},
 }
 
@@ -392,15 +393,15 @@ var postgresBackupCmd = &cobra.Command{
 		instanceName := args[0]
 		outputFile := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Creating backup of PostgreSQL instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating backup of PostgreSQL instance '%s'...", instanceName))
 
 		err := services.BackupPostgres(context.Background(), instanceName, outputFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create backup: %v\n", err)
+			logger.Error("Failed to create backup", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! Backup saved to %s\n", outputFile)
+		logger.Info(fmt.Sprintf("Success! Backup saved to %s", outputFile))
 	},
 }
 
@@ -412,15 +413,15 @@ var postgresRestoreCmd = &cobra.Command{
 		instanceName := args[0]
 		backupFile := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Restoring PostgreSQL instance '%s' from backup...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Restoring PostgreSQL instance '%s' from backup...", instanceName))
 
 		err := services.RestorePostgres(context.Background(), instanceName, backupFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to restore from backup: %v\n", err)
+			logger.Error("Failed to restore from backup", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Println("Success! Database restored from backup.")
+		logger.Info("Success! Database restored from backup.")
 	},
 }
 
@@ -444,23 +445,23 @@ var postgresUsersCreateCmd = &cobra.Command{
 			var err error
 			password, err = GeneratePassword(32)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Could not generate a secure password: %v\n", err)
+				logger.Error("Could not generate a secure password", "err", err)
 				os.Exit(1)
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "-----> Creating user '%s' in PostgreSQL instance '%s'...\n", username, instanceName)
+		logger.Info(fmt.Sprintf("-----> Creating user '%s' in PostgreSQL instance '%s'...", username, instanceName))
 
 		err := services.CreatePostgresUser(context.Background(), instanceName, username, password, database)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create user: %v\n", err)
+			logger.Error("Failed to create user", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! User '%s' created.\n", username)
-		fmt.Printf("Password: %s\n", password)
+		logger.Info(fmt.Sprintf("Success! User '%s' created.", username))
+		logger.Info(fmt.Sprintf("Password: %s", password))
 		if database != "" {
-			fmt.Printf("Privileges granted on database: %s\n", database)
+			logger.Info(fmt.Sprintf("Privileges granted on database: %s", database))
 		}
 	},
 }
@@ -474,15 +475,15 @@ var postgresUsersDeleteCmd = &cobra.Command{
 		instanceName := args[0]
 		username := args[1]
 
-		fmt.Fprintf(os.Stderr, "-----> Deleting user '%s' from PostgreSQL instance '%s'...\n", username, instanceName)
+		logger.Info(fmt.Sprintf("-----> Deleting user '%s' from PostgreSQL instance '%s'...", username, instanceName))
 
 		err := services.DeletePostgresUser(context.Background(), instanceName, username)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to delete user: %v\n", err)
+			logger.Error("Failed to delete user", "err", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Success! User '%s' deleted.\n", username)
+		logger.Info(fmt.Sprintf("Success! User '%s' deleted.", username))
 	},
 }
 
@@ -494,22 +495,22 @@ var postgresUsersListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		instanceName := args[0]
 
-		fmt.Fprintf(os.Stderr, "-----> Listing users in PostgreSQL instance '%s'...\n", instanceName)
+		logger.Info(fmt.Sprintf("-----> Listing users in PostgreSQL instance '%s'...", instanceName))
 
 		users, err := services.ListPostgresUsers(context.Background(), instanceName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to list users: %v\n", err)
+			logger.Error("Failed to list users", "err", err)
 			os.Exit(1)
 		}
 
 		if len(users) == 0 {
-			fmt.Println("No database users found.")
+			logger.Info("No database users found.")
 			return
 		}
 
-		fmt.Println("Database users:")
+		logger.Info("Database users:")
 		for _, user := range users {
-			fmt.Printf("  • %s\n", user)
+			logger.Info(fmt.Sprintf("  • %s", user))
 		}
 	},
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mitte-sh/mitte/pkg/actions"
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/state"
 )
 
@@ -27,25 +28,25 @@ var configListCmd = &cobra.Command{
 		appName := args[0]
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading application state: %v\n", err)
+			logger.Error(fmt.Sprintf("Error loading application state: %v", err))
 			os.Exit(1)
 		}
 
 		if len(app.EnvVars) == 0 && app.RawEnv == "" {
-			fmt.Fprintf(os.Stderr, "No environment variables are set for '%s'.\n", appName)
+			logger.Info(fmt.Sprintf("No environment variables are set for '%s'.", appName))
 			return
 		}
 
 		if app.RawEnv != "" {
 			fmt.Print(app.RawEnv)
 			if !strings.HasSuffix(app.RawEnv, "\n") {
-				fmt.Println()
+				logger.Info("")
 			}
 			return
 		}
 
 		for key, value := range app.EnvVars {
-			fmt.Printf("%s=%s\n", key, value)
+			logger.Info(fmt.Sprintf("%s=%s", key, value))
 		}
 	},
 }
@@ -63,21 +64,21 @@ var configSetCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading application state: %v\n", err)
+			logger.Error(fmt.Sprintf("Error loading application state: %v", err))
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "Setting environment variables for %s... ", appName)
+		logger.Info(fmt.Sprintf("Setting environment variables for %s...", appName))
 		for _, v := range varsToSet {
 			parts := strings.SplitN(v, "=", 2)
 			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "\nError: variable format must be KEY=VALUE, but got '%s'.\n", v)
+				logger.Error(fmt.Sprintf("variable format must be KEY=VALUE, but got '%s'.", v))
 				os.Exit(1)
 			}
 			key := parts[0]
@@ -108,20 +109,20 @@ var configSetCmd = &cobra.Command{
 		}
 
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Error(fmt.Sprintf("Error saving configuration: %v", err))
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "done.")
+		logger.Info("done.")
 
 		if !noRestart {
-			fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+			logger.Info("Redeploying application to apply changes...")
 			if err := actions.RestartApp(appName); err != nil {
-				fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+				logger.Error(fmt.Sprintf("Error redeploying application: %v", err))
 				os.Exit(1)
 			}
-			fmt.Printf("Configuration updated for '%s'. The application is now restarting.\n", appName)
+			logger.Info(fmt.Sprintf("Configuration updated for '%s'. The application is now restarting.", appName))
 		} else {
-			fmt.Printf("Configuration updated for '%s'. Run a deploy or restart for changes to take effect.\n", appName)
+			logger.Info(fmt.Sprintf("Configuration updated for '%s'. Run a deploy or restart for changes to take effect.", appName))
 		}
 	},
 }
@@ -139,17 +140,17 @@ var configUnsetCmd = &cobra.Command{
 
 		appName, err := state.ResolveAppName(userInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading application state: %v\n", err)
+			logger.Error(fmt.Sprintf("Error loading application state: %v", err))
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stderr, "Unsetting environment variables from %s... ", appName)
+		logger.Info(fmt.Sprintf("Unsetting environment variables from %s...", appName))
 		for _, key := range keysToUnset {
 			delete(app.EnvVars, key)
 
@@ -168,20 +169,20 @@ var configUnsetCmd = &cobra.Command{
 		}
 
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Error(fmt.Sprintf("Error saving configuration: %v", err))
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "done.")
+		logger.Info("done.")
 
 		if !noRestart {
-			fmt.Fprintln(os.Stderr, "Redeploying application to apply changes...")
+			logger.Info("Redeploying application to apply changes...")
 			if err := actions.RestartApp(appName); err != nil {
-				fmt.Fprintf(os.Stderr, "Error redeploying application: %v\n", err)
+				logger.Error(fmt.Sprintf("Error redeploying application: %v", err))
 				os.Exit(1)
 			}
-			fmt.Printf("Configuration updated for '%s'. The application is now restarting.\n", appName)
+			logger.Info(fmt.Sprintf("Configuration updated for '%s'. The application is now restarting.", appName))
 		} else {
-			fmt.Printf("Configuration updated for '%s'. Run a deploy or restart for changes to take effect.\n", appName)
+			logger.Info(fmt.Sprintf("Configuration updated for '%s'. Run a deploy or restart for changes to take effect.", appName))
 		}
 	},
 }
@@ -196,15 +197,15 @@ to apply the changes, which will trigger a redeployment.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		appName, err := state.ResolveAppName(args[0])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			logger.Error("", "err", err)
 			os.Exit(1)
 		}
 
 		// 1. Fetch current environment variables.
-		fmt.Fprintf(os.Stderr, "-----> Fetching current environment for '%s'...\n", appName)
+		logger.Info(fmt.Sprintf("-----> Fetching current environment for '%s'...", appName))
 		app, err := state.Load(appName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading application state: %v\n", err)
+			logger.Error(fmt.Sprintf("Error loading application state: %v", err))
 			os.Exit(1)
 		}
 
@@ -221,13 +222,13 @@ to apply the changes, which will trigger a redeployment.`,
 		// 2. Open the user's default editor with the current env vars.
 		newEnvContent, err := openInEditor(currentEnv)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening editor: %v\n", err)
+			logger.Error(fmt.Sprintf("Error opening editor: %v", err))
 			os.Exit(1)
 		}
 
 		// If the user didn't change anything, we're done.
 		if newEnvContent == currentEnv {
-			fmt.Println("No changes detected. Aborting.")
+			logger.Info("No changes detected. Aborting.")
 			return
 		}
 
@@ -236,17 +237,17 @@ to apply the changes, which will trigger a redeployment.`,
 		app.SyncEnv()
 
 		if err := app.Save(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			logger.Error(fmt.Sprintf("Error saving configuration: %v", err))
 			os.Exit(1)
 		}
 
 		// 4. Trigger a restart to apply all changes.
-		fmt.Fprintln(os.Stderr, "-----> Applying changes by restarting the application...")
+		logger.Info("-----> Applying changes by restarting the application...")
 		if err := actions.RestartApp(appName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error restarting application: %v\n", err)
+			logger.Error(fmt.Sprintf("Error restarting application: %v", err))
 			os.Exit(1)
 		}
-		fmt.Println("Environment successfully updated.")
+		logger.Info("Environment successfully updated.")
 	},
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mitte-sh/mitte/pkg/logger"
 	"github.com/mitte-sh/mitte/pkg/registry"
 )
 
@@ -49,7 +50,7 @@ func runRegistriesAdd(cmd *cobra.Command, args []string) {
 
 	// Validate registry host
 	if registryHost == "" {
-		fmt.Fprintf(os.Stderr, "Error: Registry host cannot be empty\n")
+		logger.Error("Error: Registry host cannot be empty")
 		os.Exit(1)
 	}
 
@@ -58,12 +59,12 @@ func runRegistriesAdd(cmd *cobra.Command, args []string) {
 
 	// Add credentials
 	if err := manager.AddCredentials(registryHost, username, password); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not add credentials: %v\n", err)
+		logger.Error("Could not add credentials", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Credentials added for registry '%s'\n", registryHost)
-	fmt.Printf("You can now pull images from '%s' using 'mitte apps deploy-image'\n", registryHost)
+	logger.Info(fmt.Sprintf("Credentials added for registry '%s'", registryHost))
+	logger.Info(fmt.Sprintf("You can now pull images from '%s' using 'mitte apps deploy-image'", registryHost))
 }
 
 func runRegistriesRemove(cmd *cobra.Command, args []string) {
@@ -74,11 +75,11 @@ func runRegistriesRemove(cmd *cobra.Command, args []string) {
 
 	// Remove credentials
 	if err := manager.RemoveCredentials(registryHost); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not remove credentials: %v\n", err)
+		logger.Error("Could not remove credentials", "err", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Credentials removed for registry '%s'\n", registryHost)
+	logger.Info(fmt.Sprintf("Credentials removed for registry '%s'", registryHost))
 }
 
 func runRegistriesList(cmd *cobra.Command, args []string) {
@@ -88,19 +89,18 @@ func runRegistriesList(cmd *cobra.Command, args []string) {
 	// List credentials
 	registries, err := manager.ListCredentials()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Could not list credentials: %v\n", err)
+		logger.Error("Could not list credentials", "err", err)
 		os.Exit(1)
 	}
 
 	if len(registries) == 0 {
-		fmt.Println("No registry credentials configured.")
-		fmt.Println("Add credentials using: mitte registries add <registry> <username> <password>")
+		logger.Info("No registry credentials configured.")
+		logger.Info("Add credentials using: mitte registries add <registry> <username> <password>")
 		return
 	}
 
-	fmt.Println("Configured registry credentials:")
+	logger.Info("Configured registry credentials:")
 	for _, reg := range registries {
-		fmt.Printf("  - %s\n", reg)
+		logger.Info(fmt.Sprintf("  - %s", reg))
 	}
 }
-
