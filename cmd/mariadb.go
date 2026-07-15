@@ -432,7 +432,7 @@ By default, the variable is named DATABASE_URL. You can specify a custom name as
 
 		// 3. Load the application state
 		app, err := state.Load(appName)
-		if err != nil || len(app.Domains) == 0 { // Check domains to see if app exists
+		if err != nil || (len(app.Domains) == 0 && !app.Internal) {
 			logger.Error(fmt.Sprintf("Could not find application '%s'.", appName))
 			os.Exit(1)
 		}

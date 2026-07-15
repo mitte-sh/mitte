@@ -264,8 +264,13 @@ func runAuthEnable(cmd *cobra.Command, args []string) {
 		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
+		os.Exit(1)
+	}
+
+	if app.Internal {
+		logger.Error(fmt.Sprintf("App '%s' is internal and has no public routes. Authentication cannot be enabled for internal apps.", appName))
 		os.Exit(1)
 	}
 
@@ -314,7 +319,7 @@ func runAuthDisable(cmd *cobra.Command, args []string) {
 		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
@@ -352,7 +357,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) {
 		logger.Error(fmt.Sprintf("Error loading app '%s': %v", appName, err))
 		os.Exit(1)
 	}
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}

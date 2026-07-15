@@ -255,8 +255,8 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	app := appState
 
 	// If this is the first deployment, the app won't have any domains assigned.
-	// We create the default domain for it.
-	if len(app.Domains) == 0 {
+	// We create the default domain for it unless the app is internal.
+	if len(app.Domains) == 0 && !app.Internal {
 		baseDomain, err := config.GetBaseDomain()
 		if err != nil {
 			logger.Error("", "err", err)
@@ -277,15 +277,20 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 	}
 
 	// --- 8. Update the routing layer ---
-	// Use SetAppRoutesWithAuth which handles both creating and updating routes
-	authEnabled := app.Auth != nil && app.Auth.Enabled
-	authPolicy := ""
-	if authEnabled {
-		authPolicy = app.Auth.Policy
-	}
-	logger.Info("-----> Updating routes")
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		logger.Error(fmt.Sprintf("Routing update failed: %v", err))
+	// Internal apps are not exposed to the internet, so skip route creation.
+	if app.Internal {
+		logger.Info("-----> App is internal; skipping public route update")
+	} else {
+		// Use SetAppRoutesWithAuth which handles both creating and updating routes
+		authEnabled := app.Auth != nil && app.Auth.Enabled
+		authPolicy := ""
+		if authEnabled {
+			authPolicy = app.Auth.Policy
+		}
+		logger.Info("-----> Updating routes")
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+			logger.Error(fmt.Sprintf("Routing update failed: %v", err))
+		}
 	}
 
 	// --- Step 9: Final Success Message ---

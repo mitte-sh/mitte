@@ -224,9 +224,30 @@ var appsDisableCmd = &cobra.Command{
 	Run:   runAppsDisable,
 }
 
+var appsExposeCmd = &cobra.Command{
+	Use:   "expose <app-name>",
+	Short: "Expose an internal application to the internet",
+	Long: `Expose an internal application to the internet by assigning it a default domain
+and creating Caddy routes. The app will remain reachable on localhost as well.`,
+	Args: cobra.ExactArgs(1),
+	Run:  runAppsExpose,
+}
+
+var appsUnexposeCmd = &cobra.Command{
+	Use:   "unexpose <app-name>",
+	Short: "Make an application internal (not exposed to the internet)",
+	Long: `Make an application internal by removing its Caddy routes and binding its ports
+to 127.0.0.1. The app remains reachable from other apps on the same host.`,
+	Args: cobra.ExactArgs(1),
+	Run:  runAppsUnexpose,
+}
+
 func init() {
 	appsCmd.AddCommand(appsListCmd)
+
+	appsCreateCmd.Flags().Bool("internal", false, "Create the app as internal (not exposed to the internet)")
 	appsCmd.AddCommand(appsCreateCmd)
+
 	appsCmd.AddCommand(appsDestroyCmd)
 	appsCmd.AddCommand(appsBuildCmd)
 	appsCmd.AddCommand(appsSetImageCmd)
@@ -255,6 +276,8 @@ func init() {
 	appsCmd.AddCommand(appsSetUserCmd)
 	appsCmd.AddCommand(appsEnableCmd)
 	appsCmd.AddCommand(appsDisableCmd)
+	appsCmd.AddCommand(appsExposeCmd)
+	appsCmd.AddCommand(appsUnexposeCmd)
 	rootCmd.AddCommand(appsCmd)
 }
 
@@ -284,7 +307,7 @@ func runAppsList(cmd *cobra.Command, args []string) {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	defer w.Flush()
-	fmt.Fprintln(w, "APP\tSTATUS\tCREATED\tIMAGE TAG\tURLS")
+	fmt.Fprintln(w, "APP\tSTATUS\tINTERNAL\tCREATED\tIMAGE TAG\tURLS")
 
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
@@ -292,13 +315,16 @@ func runAppsList(cmd *cobra.Command, args []string) {
 		}
 		appName := strings.TrimSuffix(file.Name(), ".json")
 
-		var status, created, imageTag, urls string
+		var status, created, imageTag, urls, internalStr string
 
 		appState, err := state.Load(appName)
 		if err != nil {
 			urls = "error"
 		} else {
 			urls = strings.Join(appState.Domains, ", ")
+			if appState.Internal {
+				internalStr = "yes"
+			}
 			if appState.Disabled {
 				status = "disabled"
 			}
@@ -325,36 +351,45 @@ func runAppsList(cmd *cobra.Command, args []string) {
 			imageTag = "-"
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", appName, status, created, imageTag, urls)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", appName, status, internalStr, created, imageTag, urls)
 	}
 }
 
 func runAppsCreate(cmd *cobra.Command, args []string) {
 	appName := args[0]
+	internal, _ := cmd.Flags().GetBool("internal")
+
 	logger.Info(fmt.Sprintf("Creating app '%s'... ", appName))
 
 	// --- 1. Check if app already exists ---
+	if state.Exists(appName) {
+		logger.Error(fmt.Sprintf("Application '%s' already exists.", appName))
+		os.Exit(1)
+	}
+
 	app, err := state.Load(appName)
 	if err != nil {
 		logger.Error("Could not check app state", "err", err)
 		os.Exit(1)
 	}
-	// An "existing" app is one that already has domains.
-	if len(app.Domains) > 0 {
-		logger.Error(fmt.Sprintf("Application '%s' already exists.", appName))
-		os.Exit(1)
-	}
+	app.Internal = internal
 	logger.Info("done.")
 
-	// --- 2. Create app state with a default domain ---
+	// --- 2. Create app state with a default domain (public apps only) ---
 	baseDomain, err := config.GetBaseDomain()
 	if err != nil {
 		logger.Error(fmt.Sprintf("Error: %v", err))
 		os.Exit(1)
 	}
-	defaultDomain := fmt.Sprintf("%s.%s", appName, baseDomain)
-	logger.Info(fmt.Sprintf("Assigning default domain: %s", defaultDomain))
-	app.Domains = append(app.Domains, defaultDomain)
+
+	var defaultDomain string
+	if internal {
+		logger.Info("Creating app as internal (no public domain or routes).")
+	} else {
+		defaultDomain = fmt.Sprintf("%s.%s", appName, baseDomain)
+		logger.Info(fmt.Sprintf("Assigning default domain: %s", defaultDomain))
+		app.Domains = append(app.Domains, defaultDomain)
+	}
 	if err = app.Save(); err != nil {
 		logger.Error("Could not save app state", "err", err)
 		os.Exit(1)
@@ -392,24 +427,33 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 		logger.Warn("Could not save host port", "err", err)
 	}
 
-	// --- 5. Route traffic ---
-	logger.Info("Routing traffic...")
-	authEnabled := app.Auth != nil && app.Auth.Enabled
-	authPolicy := ""
-	if authEnabled {
-		authPolicy = app.Auth.Policy
-	}
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
-		logger.Error("Could not update routes", "err", err)
-		// Don't exit here, the app is running, just not routable.
+	// --- 5. Route traffic (public apps only) ---
+	if internal {
+		logger.Info("Skipping public routing for internal app.")
+	} else {
+		logger.Info("Routing traffic...")
+		authEnabled := app.Auth != nil && app.Auth.Enabled
+		authPolicy := ""
+		if authEnabled {
+			authPolicy = app.Auth.Policy
+		}
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+			logger.Error("Could not update routes", "err", err)
+			// Don't exit here, the app is running, just not routable.
+		}
 	}
 
 	// --- Final Success Message ---
 	logger.Info(fmt.Sprintf("Success! Your new application '%s' is ready.", appName))
-	logger.Info(fmt.Sprintf("You can view it at: http://%s", defaultDomain))
-	logger.Info("To deploy your own code, add the git remote and push:")
-	logger.Info(fmt.Sprintf("  git remote add mitte mitte@%s:%s", baseDomain, appName))
-	logger.Info("  git push mitte main")
+	if internal {
+		logger.Info(fmt.Sprintf("App is internal and reachable on localhost:%s from the host.", deployResult.HostPort))
+		logger.Info(fmt.Sprintf("Other mitte containers can reach it via its container name (e.g. %s:<port>).", strings.ToLower(appName)))
+	} else {
+		logger.Info(fmt.Sprintf("You can view it at: http://%s", defaultDomain))
+		logger.Info("To deploy your own code, add the git remote and push:")
+		logger.Info(fmt.Sprintf("  git remote add mitte mitte@%s:%s", baseDomain, appName))
+		logger.Info("  git push mitte main")
+	}
 }
 
 func runAppsDestroy(cmd *cobra.Command, args []string) {
@@ -508,7 +552,7 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -660,7 +704,7 @@ func runAppsSetImage(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -702,7 +746,7 @@ func runAppsSetVolumes(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -789,7 +833,7 @@ func runAppsUnsetVolumes(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
@@ -848,7 +892,7 @@ func runAppsSetPorts(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -941,7 +985,7 @@ func runAppsUnsetPorts(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
 		os.Exit(1)
 	}
@@ -990,7 +1034,7 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 		logger.Error("Could not load app state", "err", err)
 		os.Exit(1)
 	}
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -1110,7 +1154,7 @@ func runAppsSetBuildpack(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -1143,7 +1187,7 @@ func runAppsDetectBuildpack(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -1227,7 +1271,7 @@ func runAppsSetCommand(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -1261,7 +1305,7 @@ func runAppsSetUser(cmd *cobra.Command, args []string) {
 	}
 
 	// Check if app exists (has domains)
-	if len(app.Domains) == 0 {
+	if len(app.Domains) == 0 && !app.Internal {
 		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
 		os.Exit(1)
 	}
@@ -1373,6 +1417,130 @@ func runAppsDisable(cmd *cobra.Command, args []string) {
 	}
 
 	logger.Info(fmt.Sprintf("Success! App '%s' is now disabled.", appName))
+}
+
+func runAppsExpose(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	app, err := state.Load(appName)
+	if err != nil {
+		logger.Error("Could not load app state", "err", err)
+		os.Exit(1)
+	}
+
+	if len(app.Domains) == 0 {
+		baseDomain, err := config.GetBaseDomain()
+		if err != nil {
+			logger.Error(fmt.Sprintf("Error: %v", err))
+			os.Exit(1)
+		}
+		defaultDomain := fmt.Sprintf("%s.%s", appName, baseDomain)
+		logger.Info(fmt.Sprintf("Assigning default domain: %s", defaultDomain))
+		app.Domains = append(app.Domains, defaultDomain)
+	}
+
+	if !app.Internal {
+		logger.Info(fmt.Sprintf("App '%s' is already exposed.", appName))
+		return
+	}
+
+	app.Internal = false
+	if err := app.Save(); err != nil {
+		logger.Error("Could not save app state", "err", err)
+		os.Exit(1)
+	}
+
+	// Redeploy so ports are bound to 0.0.0.0 instead of 127.0.0.1
+	logger.Info("Redeploying app to expose ports on all interfaces...")
+	var imageToDeploy string
+	if app.Image != "" {
+		imageToDeploy = app.Image
+	} else {
+		latestImage, err := deployer.GetLatestImageForApp(ctx, appName)
+		if err == nil {
+			imageToDeploy = latestImage
+		} else {
+			imageToDeploy = placeholderImage
+		}
+	}
+
+	deployResult, err := deployer.Deploy(ctx, appName, imageToDeploy, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
+	if err != nil {
+		logger.Error("Deployment failed", "err", err)
+		os.Exit(1)
+	}
+
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		logger.Warn("Could not save host port", "err", err)
+	}
+
+	authEnabled := app.Auth != nil && app.Auth.Enabled
+	authPolicy := ""
+	if authEnabled {
+		authPolicy = app.Auth.Policy
+	}
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+		logger.Error("Could not update routes", "err", err)
+		os.Exit(1)
+	}
+
+	logger.Info(fmt.Sprintf("Success! App '%s' is now exposed at http://%s", appName, app.Domains[0]))
+}
+
+func runAppsUnexpose(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	ctx := context.Background()
+
+	app, err := state.Load(appName)
+	if err != nil {
+		logger.Error("Could not load app state", "err", err)
+		os.Exit(1)
+	}
+
+	if app.Internal {
+		logger.Info(fmt.Sprintf("App '%s' is already internal.", appName))
+		return
+	}
+
+	app.Internal = true
+	if err := app.Save(); err != nil {
+		logger.Error("Could not save app state", "err", err)
+		os.Exit(1)
+	}
+
+	// Redeploy so ports are bound to 127.0.0.1 instead of 0.0.0.0
+	logger.Info("Redeploying app to bind ports to localhost only...")
+	var imageToDeploy string
+	if app.Image != "" {
+		imageToDeploy = app.Image
+	} else {
+		latestImage, err := deployer.GetLatestImageForApp(ctx, appName)
+		if err == nil {
+			imageToDeploy = latestImage
+		} else {
+			imageToDeploy = placeholderImage
+		}
+	}
+
+	deployResult, err := deployer.Deploy(ctx, appName, imageToDeploy, app.Volumes, app.Ports, app.ContainerName, app.Command, app.User)
+	if err != nil {
+		logger.Error("Deployment failed", "err", err)
+		os.Exit(1)
+	}
+
+	app.HostPort = deployResult.HostPort
+	if err := app.Save(); err != nil {
+		logger.Warn("Could not save host port", "err", err)
+	}
+
+	if err := router.DeleteRouteFile(appName); err != nil {
+		logger.Warn("Could not remove routes", "err", err)
+	}
+
+	logger.Info(fmt.Sprintf("Success! App '%s' is now internal and reachable on localhost:%s from the host.", appName, deployResult.HostPort))
+	logger.Info(fmt.Sprintf("Other mitte containers can reach it via its container name (e.g. %s:<port>).", strings.ToLower(appName)))
 }
 
 func runAppsListVolumes(cmd *cobra.Command, args []string) {

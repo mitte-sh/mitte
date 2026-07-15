@@ -48,6 +48,12 @@ func RestartApp(appName string) error {
 	}
 
 	// 3. Update the router to point the app's domains to the new container's port.
+	// Internal apps have no public routes, so skip this step.
+	if appState.Internal {
+		logger.Info("App is internal; skipping public route update.")
+		return nil
+	}
+
 	authEnabled := appState.Auth != nil && appState.Auth.Enabled
 	authPolicy := ""
 	if authEnabled {

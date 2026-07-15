@@ -39,6 +39,15 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 		return nil, fmt.Errorf("no se pudo cargar el estado para la app %s: %w", appName, err)
 	}
 
+	// Internal apps are not exposed to the internet. Bind their ports to the
+	// loopback interface so only local processes (and other mitte apps via the
+	// host) can reach them.
+	hostIP := "0.0.0.0"
+	if appState.Internal {
+		hostIP = "127.0.0.1"
+		logger.Info("App is configured as internal; binding ports to 127.0.0.1")
+	}
+
 	// Use custom container name if provided, otherwise use app name
 	actualContainerName := containerName
 	if actualContainerName == "" {
@@ -97,7 +106,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 				// Add to port bindings
 				portBindings[containerPortWithProto] = []nat.PortBinding{
 					{
-						HostIP:   "0.0.0.0",
+						HostIP:   hostIP,
 						HostPort: hostPort,
 					},
 				}
@@ -139,7 +148,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 				if i == 0 && usePreviousPort {
 					portBindings[port] = []nat.PortBinding{
 						{
-							HostIP:   "0.0.0.0",
+							HostIP:   hostIP,
 							HostPort: previousPort,
 						},
 					}
@@ -148,7 +157,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 					// Bind to a random host port (empty HostPort means random)
 					portBindings[port] = []nat.PortBinding{
 						{
-							HostIP:   "0.0.0.0",
+							HostIP:   hostIP,
 							HostPort: "", // Random port
 						},
 					}
@@ -199,7 +208,7 @@ func Deploy(ctx context.Context, appName, imageTag string, volumes []string, por
 			for port := range portBindings {
 				portBindings[port] = []nat.PortBinding{
 					{
-						HostIP:   "0.0.0.0",
+						HostIP:   hostIP,
 						HostPort: "",
 					},
 				}

@@ -10,6 +10,13 @@ import (
 
 const appsDir = "/var/lib/mitte/apps"
 
+// Exists checks whether an app state file already exists on disk.
+func Exists(appName string) bool {
+	filePath := filepath.Join(appsDir, appName+".json")
+	_, err := os.Stat(filePath)
+	return err == nil
+}
+
 type App struct {
 	AppName       string            `json:"app_name"`
 	Domains       []string          `json:"domains"`
@@ -25,6 +32,7 @@ type App struct {
 	Command       []string          `json:"command,omitempty"`        // Custom entrypoint/command
 	User          string            `json:"user,omitempty"`           // Custom user to run as
 	Disabled      bool              `json:"disabled,omitempty"`       // Whether the app is disabled
+	Internal      bool              `json:"internal,omitempty"`       // Whether the app is internal (not exposed to the internet)
 	Auth          *AuthConfig       `json:"auth,omitempty"`           // Auth protection config
 }
 

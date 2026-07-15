@@ -96,8 +96,13 @@ var routesUpdateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if len(app.Domains) == 0 {
+		if len(app.Domains) == 0 && !app.Internal {
 			logger.Error(fmt.Sprintf("Error: App %s has no domains configured", appName))
+			os.Exit(1)
+		}
+
+		if app.Internal {
+			logger.Error(fmt.Sprintf("Error: App %s is internal and has no public routes", appName))
 			os.Exit(1)
 		}
 

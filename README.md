@@ -138,6 +138,43 @@ git push mitte main
 
 The system will detect the pre-built image configuration and deploy it directly without building.
 
+### 🔒 Internal Apps
+
+Mitte allows you to create **internal apps** that are not exposed to the internet. This is perfect for backing services like caches, queues, or databases that only need to be reachable by other apps running on the same host.
+
+Internal apps:
+
+- Do **not** get a public domain or Caddy route.
+- Have their container ports bound to `127.0.0.1` (localhost), so they are only reachable from the host itself.
+- Can still be reached by other mitte apps using `localhost:<port>`.
+
+**Create an internal app:**
+
+```bash
+mitte apps create memcache --internal
+mitte apps set-ports memcache 11211:11211
+mitte apps set-image memcache memcached:latest
+mitte apps deploy-image memcache
+```
+
+From the host, the app is reachable at `localhost:11211`. From another mitte container on the same Docker network, reach it by container name, e.g. `memcache:11211`.
+
+**Expose an internal app later:**
+
+```bash
+mitte apps expose memcache
+```
+
+This assigns a default domain, creates a public Caddy route, and rebinds the ports to all interfaces.
+
+**Make a public app internal:**
+
+```bash
+mitte apps unexpose memcache
+```
+
+This removes the Caddy route and rebinds the ports back to `127.0.0.1`.
+
 **3. Using Private Registries**
 
 Mitte supports pulling images from any Docker-compatible registry (Docker Hub, GitHub Container Registry, GitLab, private registries, etc.). Authentication credentials are automatically resolved from `~/.docker/config.json`.
@@ -287,6 +324,9 @@ mitte apps list
 # This is useful for configuring an app before the first push
 mitte apps create <appname>
 
+# Create an internal app (not exposed to the internet)
+mitte apps create <appname> --internal
+
 # Set a pre-built Docker image for an app
 mitte apps set-image <appname> <image>
 
@@ -322,6 +362,12 @@ mitte apps enable <appname>
 
 # Disable an application
 mitte apps disable <appname>
+
+# Expose an internal app to the internet
+mitte apps expose <appname>
+
+# Make a public app internal (not exposed to the internet)
+mitte apps unexpose <appname>
 
 # Permanently destroy an application and all its resources
 mitte apps destroy <appname>

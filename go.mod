@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/buildpacks/lifecycle v0.20.16
+	github.com/charmbracelet/log v1.0.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/fatih/color v1.18.0
@@ -12,6 +13,7 @@ require (
 	github.com/moby/term v0.5.2
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/crypto v0.49.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
@@ -24,7 +26,6 @@ require (
 	github.com/buildpacks/imgutil v0.0.0-20250909162057-9db16db815e3 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/lipgloss v1.1.0 // indirect
-	github.com/charmbracelet/log v1.0.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
@@ -66,6 +67,5 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gotest.tools/v3 v3.5.1 // indirect
 )
