@@ -288,7 +288,7 @@ func runGitReceive(cmd *cobra.Command, args []string) {
 			authPolicy = app.Auth.Policy
 		}
 		logger.Info("-----> Updating routes")
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 			logger.Error(fmt.Sprintf("Routing update failed: %v", err))
 		}
 	}

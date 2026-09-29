@@ -348,6 +348,15 @@ mitte apps set-command <appname> serve --port 8080
 # Configure a custom user (UID:GID) to run the container
 mitte apps set-user <appname> 1000:1000
 
+# Configure streaming (SSE) paths for an app
+mitte apps set-stream-paths <appname> /sse/*
+
+# List streaming paths for an app
+mitte apps list-stream-paths <appname>
+
+# Remove streaming paths for an app (use --all to clear)
+mitte apps unset-stream-paths <appname> /sse/*
+
 # Deploy a pre-built image (after configuration)
 mitte apps deploy-image <appname>
 

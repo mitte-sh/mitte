@@ -293,7 +293,7 @@ func runAuthEnable(cmd *cobra.Command, args []string) {
 
 	// Update routes with auth
 	if app.HostPort != "" {
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, app.HostPort, true, policy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, app.HostPort, true, policy, app.StreamPaths); err != nil {
 			logger.Error(fmt.Sprintf("Error updating routes: %v", err))
 			os.Exit(1)
 		}
@@ -333,7 +333,7 @@ func runAuthDisable(cmd *cobra.Command, args []string) {
 
 	// Update routes without auth
 	if app.HostPort != "" {
-		if err := router.SetAppRoutes(appName, app.Domains, app.HostPort); err != nil {
+		if err := router.SetAppRoutes(appName, app.Domains, app.HostPort, app.StreamPaths); err != nil {
 			logger.Error(fmt.Sprintf("Error updating routes: %v", err))
 			os.Exit(1)
 		}

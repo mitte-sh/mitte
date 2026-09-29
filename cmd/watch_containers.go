@@ -123,7 +123,7 @@ func handleDockerEvent(ctx context.Context, cli *client.Client, event events.Mes
 			if authEnabled {
 				authPolicy = app.Auth.Policy
 			}
-			if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy); err != nil {
+			if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 				logger.Error("Could not update Caddy route", "err", err)
 			} else {
 				logger.Error(fmt.Sprintf("  ✓ Updated Caddy route for %s to port %s", appName, currentPort))
@@ -184,7 +184,7 @@ func fixAllRoutes(ctx context.Context, cli *client.Client) {
 			if authEnabled {
 				authPolicy = app.Auth.Policy
 			}
-			if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy); err != nil {
+			if err := router.SetAppRoutesWithAuth(appName, app.Domains, currentPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 				logger.Error("Could not update Caddy route", "err", err)
 			} else {
 				logger.Error(fmt.Sprintf("  ✓ Fixed route for %s", appName))

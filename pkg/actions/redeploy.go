@@ -59,5 +59,5 @@ func RestartApp(appName string) error {
 	if authEnabled {
 		authPolicy = appState.Auth.Policy
 	}
-	return router.SetAppRoutesWithAuth(appName, appState.Domains, deployResult.HostPort, authEnabled, authPolicy)
+	return router.SetAppRoutesWithAuth(appName, appState.Domains, deployResult.HostPort, authEnabled, authPolicy, appState.StreamPaths)
 }

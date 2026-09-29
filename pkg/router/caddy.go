@@ -75,13 +75,15 @@ func reloadCaddy() error {
 
 // SetAppRoutes creates, updates, or deletes the Caddyfile for an app
 // to ensure its configuration matches the provided list of domains.
-func SetAppRoutes(appName string, domains []string, hostPort string) error {
-	return SetAppRoutesWithAuth(appName, domains, hostPort, false, "")
+func SetAppRoutes(appName string, domains []string, hostPort string, streamPaths []string) error {
+	return SetAppRoutesWithAuth(appName, domains, hostPort, false, "", streamPaths)
 }
 
 // SetAppRoutesWithAuth creates, updates, or deletes the Caddyfile for an app.
 // When authEnabled is true, a forward_auth block is added to protect the app.
-func SetAppRoutesWithAuth(appName string, domains []string, hostPort string, authEnabled bool, authPolicy string) error {
+// streamPaths are path matchers (e.g. "/sse/*") that require streaming and
+// get a dedicated reverse_proxy with flush_interval -1 so SSE is not buffered.
+func SetAppRoutesWithAuth(appName string, domains []string, hostPort string, authEnabled bool, authPolicy string, streamPaths []string) error {
 	// If an app has no domains, its config file should be removed.
 	if len(domains) == 0 {
 		logger.Info(fmt.Sprintf("No domains for '%s'. Removing Caddy route file.", appName))
@@ -99,7 +101,7 @@ func SetAppRoutesWithAuth(appName string, domains []string, hostPort string, aut
 
 	// Join all domains with a space for the Caddyfile header.
 	domainHeader := strings.Join(domains, " ")
-	content := buildAppCaddyfile(domainHeader, hostPort, authEnabled, authPolicy)
+	content := buildAppCaddyfile(domainHeader, hostPort, authEnabled, authPolicy, streamPaths)
 
 	// Write/overwrite the file using sudo and tee.
 	cmd := exec.Command("sudo", "tee", filePath)
@@ -116,7 +118,9 @@ func SetAppRoutesWithAuth(appName string, domains []string, hostPort string, aut
 // buildAppCaddyfile generates the Caddyfile content for an app.
 // The authPolicy is not used here because Authelia enforces the policy
 // per-domain via its ACL rules in configuration.yml.
-func buildAppCaddyfile(domainHeader, hostPort string, authEnabled bool, authPolicy string) string {
+// streamPaths are emitted as a named matcher with a streaming reverse_proxy
+// (flush_interval -1) so that SSE responses are flushed immediately.
+func buildAppCaddyfile(domainHeader, hostPort string, authEnabled bool, authPolicy string, streamPaths []string) string {
 	var b strings.Builder
 
 	b.WriteString(domainHeader)
@@ -126,6 +130,17 @@ func buildAppCaddyfile(domainHeader, hostPort string, authEnabled bool, authPoli
 		b.WriteString("\tforward_auth localhost:9091 {\n")
 		b.WriteString("\t\turi /api/authz/forward-auth\n")
 		b.WriteString("\t\tcopy_headers Remote-User Remote-Groups Remote-Name Remote-Email\n")
+		b.WriteString("\t}\n")
+	}
+
+	if len(streamPaths) > 0 {
+		b.WriteString("\t@sse {\n")
+		for _, p := range streamPaths {
+			b.WriteString(fmt.Sprintf("\t\tpath %s\n", p))
+		}
+		b.WriteString("\t}\n")
+		b.WriteString(fmt.Sprintf("\treverse_proxy @sse localhost:%s {\n", hostPort))
+		b.WriteString("\t\tflush_interval -1\n")
 		b.WriteString("\t}\n")
 	}
 

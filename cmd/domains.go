@@ -88,7 +88,7 @@ var domainsAddCmd = &cobra.Command{
 		if authEnabled {
 			authPolicy = app.Auth.Policy
 		}
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy, app.StreamPaths); err != nil {
 			logger.Error(fmt.Sprintf("Failed to set routes for '%s'", appName), "err", err)
 			os.Exit(1)
 		}
@@ -171,7 +171,7 @@ var domainsRemoveCmd = &cobra.Command{
 		if authEnabled {
 			authPolicy = app.Auth.Policy
 		}
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, port, authEnabled, authPolicy, app.StreamPaths); err != nil {
 			logger.Error(fmt.Sprintf("Failed to set routes for '%s'", appName), "err", err)
 			os.Exit(1)
 		}

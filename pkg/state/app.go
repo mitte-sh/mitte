@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -34,6 +35,7 @@ type App struct {
 	Disabled      bool              `json:"disabled,omitempty"`       // Whether the app is disabled
 	Internal      bool              `json:"internal,omitempty"`       // Whether the app is internal (not exposed to the internet)
 	Auth          *AuthConfig       `json:"auth,omitempty"`           // Auth protection config
+	StreamPaths   []string          `json:"stream_paths,omitempty"`   // Path prefixes that require streaming (SSE); get flush_interval -1 in Caddy
 }
 
 // AuthConfig holds authentication settings for an app.
@@ -85,7 +87,16 @@ func (a *App) Save() error {
 		return fmt.Errorf("could not encode app state for %s: %w", a.AppName, err)
 	}
 
-	return os.WriteFile(filePath, data, 0644)
+	// Write via `sudo tee` so that the file is owned by root, matching the
+	// `sudo rm` used elsewhere to delete state files. This lets the SSH
+	// `git-receive` flow (which runs as an unprivileged user) persist app
+	// state to /var/lib/mitte/apps without needing write access there.
+	cmd := exec.Command("sudo", "tee", filePath)
+	cmd.Stdin = strings.NewReader(string(data))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("could not write app state for %s: %w\nOutput: %s", a.AppName, err, string(output))
+	}
+	return nil
 }
 
 // SyncEnv synchronizes EnvVars from RawEnv. It parses RawEnv and updates

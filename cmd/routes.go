@@ -120,7 +120,7 @@ var routesUpdateCmd = &cobra.Command{
 		if authEnabled {
 			authPolicy = app.Auth.Policy
 		}
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, newPort, authEnabled, authPolicy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, newPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 			logger.Error("Could not update Caddy route", "err", err)
 			os.Exit(1)
 		}

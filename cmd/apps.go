@@ -210,6 +210,39 @@ Example: mitte apps set-user myapp 1000:1000`,
 	Run:  runAppsSetUser,
 }
 
+var appsSetStreamPathsCmd = &cobra.Command{
+	Use:   "set-stream-paths <app-name> <path>...",
+	Short: "Set streaming (SSE) paths for an application",
+	Long: `Set the paths that require real-time streaming (e.g. Server-Sent Events) for an application.
+Each path is emitted as a Caddy matcher with flush_interval -1 so responses are flushed
+immediately instead of being buffered, which unblocks SSE event streams.
+Paths support Caddy wildcards, for example:
+  mitte apps set-stream-paths myapp /sse/*
+  mitte apps set-stream-paths myapp /events /sse/* /live`,
+	Args: cobra.MinimumNArgs(2),
+	Run:  runAppsSetStreamPaths,
+}
+
+var appsUnsetStreamPathsCmd = &cobra.Command{
+	Use:   "unset-stream-paths <app-name> [path...]",
+	Short: "Unset streaming (SSE) paths for an application",
+	Long: `Unset streaming paths for an application.
+Use the --all flag to remove all stream paths.
+By default, the application is redeployed to apply changes. Use the --no-restart flag to prevent this.
+Examples:
+  mitte apps unset-stream-paths myapp /sse/*
+  mitte apps unset-stream-paths myapp --all`,
+	Run: runAppsUnsetStreamPaths,
+}
+
+var appsListStreamPathsCmd = &cobra.Command{
+	Use:     "list-stream-paths <app-name>",
+	Short:   "List streaming (SSE) paths for an application",
+	Aliases: []string{"stream-paths"},
+	Args:    cobra.ExactArgs(1),
+	Run:     runAppsListStreamPaths,
+}
+
 var appsEnableCmd = &cobra.Command{
 	Use:   "enable <app-name>",
 	Short: "Enable an application",
@@ -274,6 +307,16 @@ func init() {
 	appsCmd.AddCommand(appsDetectBuildpackCmd)
 	appsCmd.AddCommand(appsSetCommandCmd)
 	appsCmd.AddCommand(appsSetUserCmd)
+
+	appsSetStreamPathsCmd.Flags().Bool("no-restart", false, "Set the stream paths without restarting the application")
+	appsCmd.AddCommand(appsSetStreamPathsCmd)
+
+	appsUnsetStreamPathsCmd.Flags().Bool("all", false, "Remove all stream paths")
+	appsUnsetStreamPathsCmd.Flags().Bool("no-restart", false, "Unset the stream paths without restarting the application")
+	appsCmd.AddCommand(appsUnsetStreamPathsCmd)
+
+	appsCmd.AddCommand(appsListStreamPathsCmd)
+
 	appsCmd.AddCommand(appsEnableCmd)
 	appsCmd.AddCommand(appsDisableCmd)
 	appsCmd.AddCommand(appsExposeCmd)
@@ -437,7 +480,7 @@ func runAppsCreate(cmd *cobra.Command, args []string) {
 		if authEnabled {
 			authPolicy = app.Auth.Policy
 		}
-		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+		if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 			logger.Error("Could not update routes", "err", err)
 			// Don't exit here, the app is running, just not routable.
 		}
@@ -499,7 +542,7 @@ func runAppsDestroy(cmd *cobra.Command, args []string) {
 
 	// --- 2. Remove Routes ---
 	cyan.Println("🔗 Removing network routes...")
-	if err := router.SetAppRoutes(appName, []string{}, ""); err != nil {
+	if err := router.SetAppRoutes(appName, []string{}, "", nil); err != nil {
 		yellow.Fprintf(os.Stderr, "⚠️  Warning: could not remove Caddy routes: %v\n", err)
 	}
 
@@ -655,7 +698,7 @@ func runAppsBuild(cmd *cobra.Command, args []string) {
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
@@ -1121,7 +1164,7 @@ func runAppsDeployImage(cmd *cobra.Command, args []string) {
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
@@ -1377,7 +1420,7 @@ func runAppsEnable(cmd *cobra.Command, args []string) {
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 		logger.Error("Failed to update routes", "err", err)
 		os.Exit(1)
 	}
@@ -1481,7 +1524,7 @@ func runAppsExpose(cmd *cobra.Command, args []string) {
 	if authEnabled {
 		authPolicy = app.Auth.Policy
 	}
-	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy); err != nil {
+	if err := router.SetAppRoutesWithAuth(appName, app.Domains, deployResult.HostPort, authEnabled, authPolicy, app.StreamPaths); err != nil {
 		logger.Error("Could not update routes", "err", err)
 		os.Exit(1)
 	}
@@ -1588,5 +1631,159 @@ func runAppsListPorts(cmd *cobra.Command, args []string) {
 	logger.Info(fmt.Sprintf("Port mappings for app '%s':", appName))
 	for i, port := range app.Ports {
 		logger.Info(fmt.Sprintf("  %d. %s", i+1, port))
+	}
+}
+
+func runAppsSetStreamPaths(cmd *cobra.Command, args []string) {
+	appName := args[0]
+	pathArgs := args[1:]
+
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+	// Validate that we have at least one path
+	if len(pathArgs) == 0 {
+		logger.Error("At least one stream path is required")
+		os.Exit(1)
+	}
+
+	logger.Info(fmt.Sprintf("Setting stream paths for app '%s'... ", appName))
+
+	// Load the app
+	app, err := state.Load(appName)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
+		os.Exit(1)
+	}
+
+	// Check if app exists (has domains)
+	if len(app.Domains) == 0 && !app.Internal {
+		logger.Error(fmt.Sprintf("App '%s' does not exist. Create it first with 'mitte apps create %s'", appName, appName))
+		os.Exit(1)
+	}
+
+	// Validate each path
+	var paths []string
+	for _, p := range pathArgs {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "*") {
+			logger.Error(fmt.Sprintf("Invalid stream path '%s'. Paths must start with '/' or '*'.", p))
+			logger.Info("Examples: /sse/*, /events, *.sse")
+			os.Exit(1)
+		}
+		paths = append(paths, p)
+	}
+
+	// Set the stream paths
+	app.StreamPaths = paths
+
+	// Save the app
+	if err := app.Save(); err != nil {
+		logger.Error("Could not save app configuration", "err", err)
+		os.Exit(1)
+	}
+
+	logger.Info("done.")
+
+	logger.Info(fmt.Sprintf("Success! App '%s' is now configured with %d stream path(s)", appName, len(paths)))
+	for i, p := range paths {
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, p))
+	}
+
+	if !noRestart {
+		logger.Info("Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			logger.Error("Error redeploying application", "err", err)
+			os.Exit(1)
+		}
+		logger.Info(fmt.Sprintf("Stream paths updated for '%s'. The application is now restarting.", appName))
+	} else {
+		logger.Info(fmt.Sprintf("To deploy the app with the updated stream paths, run: mitte apps deploy-image %s", appName))
+	}
+}
+
+func runAppsUnsetStreamPaths(cmd *cobra.Command, args []string) {
+	if len(args) < 1 {
+		cmd.Help()
+		os.Exit(1)
+	}
+	appName := args[0]
+	pathArgs := args[1:]
+
+	removeAll, _ := cmd.Flags().GetBool("all")
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
+
+	if len(pathArgs) == 0 && !removeAll {
+		logger.Error("At least one stream path is required, or use --all")
+		os.Exit(1)
+	}
+
+	logger.Info(fmt.Sprintf("Unsetting stream paths for app '%s'... ", appName))
+
+	app, err := state.Load(appName)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
+		os.Exit(1)
+	}
+
+	if len(app.Domains) == 0 && !app.Internal {
+		logger.Error(fmt.Sprintf("App '%s' does not exist.", appName))
+		os.Exit(1)
+	}
+
+	if removeAll {
+		app.StreamPaths = []string{}
+	} else {
+		var newPaths []string
+		for _, existingPath := range app.StreamPaths {
+			if slices.Contains(pathArgs, existingPath) {
+				continue
+			}
+			newPaths = append(newPaths, existingPath)
+		}
+		app.StreamPaths = newPaths
+	}
+
+	if err := app.Save(); err != nil {
+		logger.Error("Could not save app configuration", "err", err)
+		os.Exit(1)
+	}
+
+	logger.Info("done.")
+
+	if !noRestart {
+		logger.Info("Redeploying application to apply changes...")
+		if err := actions.RestartApp(appName); err != nil {
+			logger.Error("Error redeploying application", "err", err)
+			os.Exit(1)
+		}
+		logger.Info(fmt.Sprintf("Stream paths updated for '%s'. The application is now restarting.", appName))
+	} else {
+		logger.Info(fmt.Sprintf("To deploy the app with the updated stream paths, run: mitte apps deploy-image %s", appName))
+	}
+}
+
+func runAppsListStreamPaths(cmd *cobra.Command, args []string) {
+	appName, err := state.ResolveAppName(args[0])
+	if err != nil {
+		logger.Error(fmt.Sprintf("Error: %v", err))
+		os.Exit(1)
+	}
+
+	app, err := state.Load(appName)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Could not load app '%s'", appName), "err", err)
+		os.Exit(1)
+	}
+
+	if len(app.StreamPaths) == 0 {
+		logger.Info(fmt.Sprintf("No stream paths for app '%s'.", appName))
+		return
+	}
+
+	logger.Info(fmt.Sprintf("Stream paths for app '%s':", appName))
+	for i, p := range app.StreamPaths {
+		logger.Info(fmt.Sprintf("  %d. %s", i+1, p))
 	}
 }

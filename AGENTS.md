@@ -100,6 +100,9 @@
 - `mitte apps list-ports <app>` - List port mappings for an app
 - `mitte apps set-command <app> <command>...` - Set custom entrypoint/command
 - `mitte apps set-user <app> <user>` - Set custom user (UID:GID) to run the container
+- `mitte apps set-stream-paths <app> <path>...` - Set streaming (SSE) paths that get `flush_interval -1` in Caddy
+- `mitte apps unset-stream-paths <app> [path...]` - Unset streaming paths (use `--all` to clear)
+- `mitte apps list-stream-paths <app>` - List streaming paths for an app
 
 ### Buildpack Support
 
